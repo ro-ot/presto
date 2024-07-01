@@ -56,7 +56,7 @@ public class TestJdbcPrestoAction
     private static final String SUITE = "test-suite";
     private static final String NAME = "test-query";
     private static final QueryStage QUERY_STAGE = CONTROL_MAIN;
-    private static final QueryConfiguration CONFIGURATION = new QueryConfiguration(CATALOG, SCHEMA, Optional.of("user"), Optional.empty(), Optional.empty());
+    private static final QueryConfiguration CONFIGURATION = new QueryConfiguration(CATALOG, SCHEMA, Optional.of("user"), Optional.empty(), Optional.empty(), Optional.empty());
     private static final SqlParser sqlParser = new SqlParser(new SqlParserOptions().allowIdentifierSymbol(COLON, AT_SIGN));
     private static final ParsingOptions PARSING_OPTIONS = ParsingOptions.builder().setDecimalLiteralTreatment(AS_DECIMAL).build();
 
@@ -80,6 +80,7 @@ public class TestJdbcPrestoAction
         PrestoActionConfig prestoActionConfig = new PrestoActionConfig()
                 .setHosts(queryRunner.getServer().getAddress().getHost())
                 .setJdbcPort(queryRunner.getServer().getAddress().getPort());
+        VerifierConfig verifierConfig = new VerifierConfig().setTestId("test");
         prestoAction = new JdbcPrestoAction(
                 PrestoExceptionClassifier.defaultBuilder().build(),
                 CONFIGURATION,
@@ -90,7 +91,7 @@ public class TestJdbcPrestoAction
                 queryActionsConfig.getChecksumTimeout(),
                 new RetryConfig(),
                 new RetryConfig(),
-                new VerifierConfig().setTestId("test"));
+                new DefaultClientInfoFactory(new VerifierConfig().setTestId("test")));
     }
 
     @Test

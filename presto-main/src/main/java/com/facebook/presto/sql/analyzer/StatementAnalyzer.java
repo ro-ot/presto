@@ -68,6 +68,7 @@ import com.facebook.presto.sql.tree.AddColumn;
 import com.facebook.presto.sql.tree.AddConstraint;
 import com.facebook.presto.sql.tree.AliasedRelation;
 import com.facebook.presto.sql.tree.AllColumns;
+import com.facebook.presto.sql.tree.AlterColumnNotNull;
 import com.facebook.presto.sql.tree.AlterFunction;
 import com.facebook.presto.sql.tree.Analyze;
 import com.facebook.presto.sql.tree.Call;
@@ -93,6 +94,7 @@ import com.facebook.presto.sql.tree.DropView;
 import com.facebook.presto.sql.tree.Except;
 import com.facebook.presto.sql.tree.Execute;
 import com.facebook.presto.sql.tree.Explain;
+import com.facebook.presto.sql.tree.ExplainFormat;
 import com.facebook.presto.sql.tree.ExplainType;
 import com.facebook.presto.sql.tree.Expression;
 import com.facebook.presto.sql.tree.ExpressionRewriter;
@@ -207,6 +209,7 @@ import static com.facebook.presto.spi.StandardWarningCode.REDUNDANT_ORDER_BY;
 import static com.facebook.presto.spi.analyzer.AccessControlRole.TABLE_CREATE;
 import static com.facebook.presto.spi.analyzer.AccessControlRole.TABLE_DELETE;
 import static com.facebook.presto.spi.analyzer.AccessControlRole.TABLE_INSERT;
+import static com.facebook.presto.spi.connector.ConnectorTableVersion.VersionOperator;
 import static com.facebook.presto.spi.connector.ConnectorTableVersion.VersionType;
 import static com.facebook.presto.spi.function.FunctionKind.AGGREGATE;
 import static com.facebook.presto.spi.function.FunctionKind.WINDOW;
@@ -271,12 +274,15 @@ import static com.facebook.presto.sql.analyzer.TypeSignatureProvider.fromTypes;
 import static com.facebook.presto.sql.planner.ExpressionDeterminismEvaluator.isDeterministic;
 import static com.facebook.presto.sql.planner.ExpressionInterpreter.evaluateConstantExpression;
 import static com.facebook.presto.sql.planner.ExpressionInterpreter.expressionOptimizer;
+import static com.facebook.presto.sql.tree.ExplainFormat.Type.JSON;
+import static com.facebook.presto.sql.tree.ExplainFormat.Type.TEXT;
 import static com.facebook.presto.sql.tree.ExplainType.Type.DISTRIBUTED;
 import static com.facebook.presto.sql.tree.FrameBound.Type.CURRENT_ROW;
 import static com.facebook.presto.sql.tree.FrameBound.Type.FOLLOWING;
 import static com.facebook.presto.sql.tree.FrameBound.Type.PRECEDING;
 import static com.facebook.presto.sql.tree.FrameBound.Type.UNBOUNDED_FOLLOWING;
 import static com.facebook.presto.sql.tree.FrameBound.Type.UNBOUNDED_PRECEDING;
+import static com.facebook.presto.sql.tree.TableVersionExpression.TableVersionOperator;
 import static com.facebook.presto.sql.tree.TableVersionExpression.TableVersionType;
 import static com.facebook.presto.sql.tree.TableVersionExpression.TableVersionType.TIMESTAMP;
 import static com.facebook.presto.sql.tree.TableVersionExpression.TableVersionType.VERSION;
@@ -989,6 +995,12 @@ class StatementAnalyzer
         }
 
         @Override
+        protected Scope visitAlterColumnNotNull(AlterColumnNotNull node, Optional<Scope> scope)
+        {
+            return createAndAssignScope(node, scope);
+        }
+
+        @Override
         protected Scope visitDropView(DropView node, Optional<Scope> scope)
         {
             return createAndAssignScope(node, scope);
@@ -1126,9 +1138,20 @@ class StatementAnalyzer
                 throws SemanticException
         {
             checkState(node.isAnalyze(), "Non analyze explain should be rewritten to Query");
-            if (node.getOptions().stream().anyMatch(option -> !option.equals(new ExplainType(DISTRIBUTED)))) {
-                throw new SemanticException(NOT_SUPPORTED, node, "EXPLAIN ANALYZE only supports TYPE DISTRIBUTED option");
-            }
+            List<ExplainFormat.Type> formats = node.getOptions().stream()
+                    .filter(option -> option instanceof ExplainFormat)
+                    .map(ExplainFormat.class::cast)
+                    .map(ExplainFormat::getType)
+                    .collect(Collectors.toList());
+            checkState(formats.size() <= 1, "only a single format option is supported in EXPLAIN ANALYZE");
+            formats.stream().findFirst().ifPresent(format -> checkState(format.equals(TEXT) || format.equals(JSON),
+                    "only TEXT and JSON formats are supported in EXPLAIN ANALYZE"));
+            checkState(node.getOptions().stream()
+                    .filter(option -> option instanceof ExplainType)
+                    .findFirst()
+                    .map(ExplainType.class::cast)
+                    .map(ExplainType::getType)
+                    .orElse(DISTRIBUTED).equals(DISTRIBUTED), "only DISTRIBUTED type is supported in EXPLAIN ANALYZE");
             process(node.getStatement(), scope);
             analysis.setUpdateType(null);
             return createAndAssignScope(node, scope, Field.newUnqualified(node.getLocation(), "Query Plan", VARCHAR));
@@ -1348,13 +1371,24 @@ class StatementAnalyzer
 
         private Optional<TableHandle> getTableHandle(TableColumnMetadata tableColumnsMetadata, Table table, QualifiedObjectName name, Optional<Scope> scope)
         {
-            // Process table version AS OF expression
+            // Process table version AS OF/BEFORE expression
             if (table.getTableVersionExpression().isPresent()) {
                 return processTableVersion(table, name, scope);
             }
             else {
                 return tableColumnsMetadata.getTableHandle();
             }
+        }
+
+        private VersionOperator toVersionOperator(TableVersionOperator operator)
+        {
+            switch (operator) {
+                case EQUAL:
+                    return VersionOperator.EQUAL;
+                case LESS_THAN:
+                    return VersionOperator.LESS_THAN;
+            }
+            throw new SemanticException(NOT_SUPPORTED, "Table version operator %s not supported." + operator);
         }
 
         private VersionType toVersionType(TableVersionType type)
@@ -1365,35 +1399,36 @@ class StatementAnalyzer
                 case VERSION:
                     return VersionType.VERSION;
             }
-            throw new SemanticException(NOT_SUPPORTED, type.toString(), "Table version type not supported.");
+            throw new SemanticException(NOT_SUPPORTED, "Table version type %s not supported." + type);
         }
         private Optional<TableHandle> processTableVersion(Table table, QualifiedObjectName name, Optional<Scope> scope)
         {
-            Expression asOfExpr = table.getTableVersionExpression().get().getAsOfExpression();
+            Expression stateExpr = table.getTableVersionExpression().get().getStateExpression();
             TableVersionType tableVersionType = table.getTableVersionExpression().get().getTableVersionType();
-            ExpressionAnalysis expressionAnalysis = analyzeExpression(asOfExpr, scope.get());
+            TableVersionOperator tableVersionOperator = table.getTableVersionExpression().get().getTableVersionOperator();
+            ExpressionAnalysis expressionAnalysis = analyzeExpression(stateExpr, scope.get());
             analysis.recordSubqueries(table, expressionAnalysis);
-            Type asOfExprType = expressionAnalysis.getType(asOfExpr);
-            if (asOfExprType == UNKNOWN) {
-                throw new PrestoException(INVALID_ARGUMENTS, format("Table version AS OF expression cannot be NULL for %s", name.toString()));
+            Type stateExprType = expressionAnalysis.getType(stateExpr);
+            if (stateExprType == UNKNOWN) {
+                throw new PrestoException(INVALID_ARGUMENTS, format("Table version AS OF/BEFORE expression cannot be NULL for %s", name.toString()));
             }
-            Object evalAsOfExpr = evaluateConstantExpression(asOfExpr, asOfExprType, metadata, session, analysis.getParameters());
+            Object evalStateExpr = evaluateConstantExpression(stateExpr, stateExprType, metadata, session, analysis.getParameters());
             if (tableVersionType == TIMESTAMP) {
-                if (!(asOfExprType instanceof TimestampWithTimeZoneType)) {
-                    throw new SemanticException(TYPE_MISMATCH, asOfExpr,
-                            "Type %s is invalid. Supported table version AS OF expression type is Timestamp with Time Zone.",
-                            asOfExprType.getDisplayName());
+                if (!(stateExprType instanceof TimestampWithTimeZoneType)) {
+                    throw new SemanticException(TYPE_MISMATCH, stateExpr,
+                            "Type %s is invalid. Supported table version AS OF/BEFORE expression type is Timestamp with Time Zone.",
+                            stateExprType.getDisplayName());
                 }
             }
             if (tableVersionType == VERSION) {
-                if (!(asOfExprType instanceof BigintType)) {
-                    throw new SemanticException(TYPE_MISMATCH, asOfExpr,
-                            "Type %s is invalid. Supported table version AS OF expression type is BIGINT",
-                            asOfExprType.getDisplayName());
+                if (!(stateExprType instanceof BigintType)) {
+                    throw new SemanticException(TYPE_MISMATCH, stateExpr,
+                            "Type %s is invalid. Supported table version AS OF/BEFORE expression type is BIGINT",
+                            stateExprType.getDisplayName());
                 }
             }
 
-            ConnectorTableVersion tableVersion = new ConnectorTableVersion(toVersionType(tableVersionType), asOfExprType, evalAsOfExpr);
+            ConnectorTableVersion tableVersion = new ConnectorTableVersion(toVersionType(tableVersionType), toVersionOperator(tableVersionOperator), stateExprType, evalStateExpr);
             return metadata.getHandleVersion(session, name, Optional.of(tableVersion));
         }
 

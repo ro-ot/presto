@@ -41,6 +41,7 @@ import com.facebook.presto.spi.statistics.ColumnStatistics;
 import com.facebook.presto.spi.statistics.Estimate;
 import com.facebook.presto.spi.statistics.TableStatistics;
 import com.facebook.presto.testing.MaterializedResult;
+import com.facebook.presto.testing.MaterializedRow;
 import com.facebook.presto.testing.QueryRunner;
 import com.facebook.presto.tests.AbstractTestDistributedQueries;
 import com.google.common.collect.ImmutableList;
@@ -53,6 +54,7 @@ import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableOperations;
@@ -87,11 +89,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static com.facebook.presto.SystemSessionProperties.ITERATIVE_OPTIMIZER_TIMEOUT;
 import static com.facebook.presto.SystemSessionProperties.LEGACY_TIMESTAMP;
+import static com.facebook.presto.SystemSessionProperties.OPTIMIZER_USE_HISTOGRAMS;
 import static com.facebook.presto.common.type.BigintType.BIGINT;
 import static com.facebook.presto.common.type.IntegerType.INTEGER;
 import static com.facebook.presto.common.type.TimeZoneKey.UTC_KEY;
@@ -100,8 +105,7 @@ import static com.facebook.presto.hive.BaseHiveColumnHandle.ColumnType.SYNTHESIZ
 import static com.facebook.presto.iceberg.FileContent.EQUALITY_DELETES;
 import static com.facebook.presto.iceberg.FileContent.POSITION_DELETES;
 import static com.facebook.presto.iceberg.IcebergQueryRunner.ICEBERG_CATALOG;
-import static com.facebook.presto.iceberg.IcebergQueryRunner.TEST_CATALOG_DIRECTORY;
-import static com.facebook.presto.iceberg.IcebergQueryRunner.TEST_DATA_DIRECTORY;
+import static com.facebook.presto.iceberg.IcebergQueryRunner.getIcebergDataDirectoryPath;
 import static com.facebook.presto.iceberg.IcebergSessionProperties.DELETE_AS_JOIN_REWRITE_ENABLED;
 import static com.facebook.presto.iceberg.IcebergSessionProperties.STATISTIC_SNAPSHOT_RECORD_DIFFERENCE_WEIGHT;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
@@ -113,11 +117,15 @@ import static com.facebook.presto.testing.assertions.Assert.assertEquals;
 import static com.facebook.presto.tests.sql.TestTable.randomTableSuffix;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.joining;
+import static java.util.stream.IntStream.range;
+import static org.apache.iceberg.SnapshotSummary.TOTAL_DATA_FILES_PROP;
+import static org.apache.iceberg.SnapshotSummary.TOTAL_DELETE_FILES_PROP;
 import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertTrue;
 
 @Test(singleThreaded = true)
-public class IcebergDistributedTestBase
+public abstract class IcebergDistributedTestBase
         extends AbstractTestDistributedQueries
 {
     private final CatalogType catalogType;
@@ -458,6 +466,71 @@ public class IcebergDistributedTestBase
         assertUpdate("DROP TABLE test_truncate");
     }
 
+    @Test
+    public void testTruncateTableWithDeleteFiles()
+    {
+        String tableName = "test_v2_row_delete_" + randomTableSuffix();
+        try {
+            assertUpdate("CREATE TABLE " + tableName + "(a int, b varchar) WITH (format_version = '2', delete_mode = 'merge-on-read')");
+            assertUpdate("INSERT INTO " + tableName + " VALUES (1, '1001'), (2, '1002'), (3, '1003')", 3);
+
+            // execute row level deletion
+            assertUpdate("DELETE FROM " + tableName + " WHERE b in ('1002', '1003')", 2);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (1, '1001')");
+
+            Table icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 1);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 1);
+
+            // execute truncate table
+            assertUpdate("TRUNCATE TABLE " + tableName);
+            assertQuery("SELECT count(*) FROM " + tableName, "VALUES 0");
+
+            icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 0);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 0);
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testShowColumnsForPartitionedTable()
+    {
+        // Partitioned Table with only identity partitions
+        getQueryRunner().execute("CREATE TABLE show_columns_only_identity_partition " +
+                "(id int," +
+                " name varchar," +
+                " team varchar) WITH (partitioning = ARRAY['team'])");
+
+        MaterializedResult actual = computeActual("SHOW COLUMNS FROM show_columns_only_identity_partition");
+
+        MaterializedResult expectedParametrizedVarchar = resultBuilder(getSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR)
+                .row("id", "integer", "", "")
+                .row("name", "varchar", "", "")
+                .row("team", "varchar", "partition key", "")
+                .build();
+
+        assertEquals(actual, expectedParametrizedVarchar);
+
+        // Partitioned Table with non identity partition transforms
+        getQueryRunner().execute("CREATE TABLE show_columns_with_non_identity_partition " +
+                "(id int," +
+                " name varchar," +
+                " team varchar) WITH (partitioning = ARRAY['truncate(team, 1)', 'team'])");
+
+        actual = computeActual("SHOW COLUMNS FROM show_columns_with_non_identity_partition");
+
+        expectedParametrizedVarchar = resultBuilder(getSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR)
+                .row("id", "integer", "", "")
+                .row("name", "varchar", "", "")
+                .row("team", "varchar", "partition by truncate[1], identity", "")
+                .build();
+
+        assertEquals(actual, expectedParametrizedVarchar);
+    }
+
     @Override
     public void testShowColumns()
     {
@@ -491,11 +564,15 @@ public class IcebergDistributedTestBase
     @Test(dataProvider = "timezones")
     public void testPartitionedByTimestampType(String zoneId, boolean legacyTimestamp)
     {
-        Session session = sessionForTimezone(zoneId, legacyTimestamp);
+        Session sessionForTimeZone = sessionForTimezone(zoneId, legacyTimestamp);
+        testWithAllFileFormats(sessionForTimeZone, (session, fileFormat) -> testPartitionedByTimestampTypeForFormat(session, fileFormat));
+    }
 
+    private void testPartitionedByTimestampTypeForFormat(Session session, FileFormat fileFormat)
+    {
         try {
             // create iceberg table partitioned by column of TimestampType, and insert some data
-            assertQuerySucceeds(session, "create table test_partition_columns(a bigint, b timestamp) with (partitioning = ARRAY['b'])");
+            assertQuerySucceeds(session, format("create table test_partition_columns(a bigint, b timestamp) with (partitioning = ARRAY['b'], format = '%s')", fileFormat.name()));
             assertQuerySucceeds(session, "insert into test_partition_columns values(1, timestamp '1984-12-08 00:10:00'), (2, timestamp '2001-01-08 12:01:01')");
 
             // validate return data of TimestampType
@@ -614,6 +691,59 @@ public class IcebergDistributedTestBase
     @Override
     public void testDescribeOutputNamedAndUnnamed()
     {
+    }
+
+    /**
+     * Increased the optimizer timeout from 15000ms to 25000ms
+     */
+    @Override
+    public void testLargeIn()
+    {
+        String longValues = range(0, 5000)
+                .mapToObj(Integer::toString)
+                .collect(joining(", "));
+        Session session = Session.builder(getSession())
+                .setSystemProperty(ITERATIVE_OPTIMIZER_TIMEOUT, "25000ms")
+                .build();
+        assertQuery(session, "SELECT orderkey FROM orders WHERE orderkey IN (" + longValues + ")");
+        assertQuery(session, "SELECT orderkey FROM orders WHERE orderkey NOT IN (" + longValues + ")");
+
+        assertQuery(session, "SELECT orderkey FROM orders WHERE orderkey IN (mod(1000, orderkey), " + longValues + ")");
+        assertQuery(session, "SELECT orderkey FROM orders WHERE orderkey NOT IN (mod(1000, orderkey), " + longValues + ")");
+
+        String varcharValues = range(0, 5000)
+                .mapToObj(i -> "'" + i + "'")
+                .collect(joining(", "));
+        assertQuery(session, "SELECT orderkey FROM orders WHERE cast(orderkey AS VARCHAR) IN (" + varcharValues + ")");
+        assertQuery(session, "SELECT orderkey FROM orders WHERE cast(orderkey AS VARCHAR) NOT IN (" + varcharValues + ")");
+
+        String arrayValues = range(0, 5000)
+                .mapToObj(i -> format("ARRAY[%s, %s, %s]", i, i + 1, i + 2))
+                .collect(joining(", "));
+        assertQuery(session, "SELECT ARRAY[0, 0, 0] in (ARRAY[0, 0, 0], " + arrayValues + ")", "values true");
+        assertQuery(session, "SELECT ARRAY[0, 0, 0] in (" + arrayValues + ")", "values false");
+    }
+
+    /**
+     * Increased the optimizer timeouts from 30000ms and 20000ms to 40000ms and 30000ms respectively
+     */
+    @Override
+    public void testLargeInWithHistograms()
+    {
+        String longValues = range(0, 10_000)
+                .mapToObj(Integer::toString)
+                .collect(joining(", "));
+        String query = "select orderpriority, sum(totalprice) from lineitem join orders on lineitem.orderkey = orders.orderkey where orders.orderkey in (" + longValues + ") group by 1";
+        Session session = Session.builder(getSession())
+                .setSystemProperty(ITERATIVE_OPTIMIZER_TIMEOUT, "40000ms")
+                .setSystemProperty(OPTIMIZER_USE_HISTOGRAMS, "true")
+                .build();
+        assertQuerySucceeds(session, query);
+        session = Session.builder(getSession())
+                .setSystemProperty(ITERATIVE_OPTIMIZER_TIMEOUT, "30000ms")
+                .setSystemProperty(OPTIMIZER_USE_HISTOGRAMS, "false")
+                .build();
+        assertQuerySucceeds(session, query);
     }
 
     @Override
@@ -1245,6 +1375,205 @@ public class IcebergDistributedTestBase
         assertQuery(session, "SELECT * FROM " + tableName, "VALUES (1, '1001', NULL, NULL), (3, '1003', NULL, NULL), (6, '1004', 1, NULL), (6, '1006', 2, 'th002')");
     }
 
+    @Test
+    public void testPartShowStatsWithFilters()
+    {
+        assertQuerySucceeds("CREATE TABLE showstatsfilters (i int) WITH (partitioning = ARRAY['i'])");
+        assertQuerySucceeds("INSERT INTO showstatsfilters VALUES 1, 2, 3, 4, 5, 6, 7, 7, 7, 7");
+        assertQuerySucceeds("ANALYZE showstatsfilters");
+
+        MaterializedResult statsTable = getQueryRunner().execute("SHOW STATS for showstatsfilters");
+        MaterializedRow columnStats = statsTable.getMaterializedRows().get(0);
+        assertEquals(columnStats.getField(2), 7.0); // ndvs;
+        assertEquals(columnStats.getField(3), 0.0); // nulls
+        assertEquals(columnStats.getField(5), "1"); // min
+        assertEquals(columnStats.getField(6), "7"); // max
+
+        // EQ
+        statsTable = getQueryRunner().execute("SHOW STATS for (SELECT * FROM showstatsfilters WHERE i = 7)");
+        columnStats = statsTable.getMaterializedRows().get(0);
+        assertEquals(columnStats.getField(5), "7"); // min
+        assertEquals(columnStats.getField(6), "7"); // max
+        assertEquals(columnStats.getField(3), 0.0); // nulls
+        assertEquals((double) columnStats.getField(2), 7.0d * (4.0d / 10.0d), 1E-8); // ndvs;
+
+        // LT
+        statsTable = getQueryRunner().execute("SHOW STATS for (SELECT * FROM showstatsfilters WHERE i < 7)");
+        columnStats = statsTable.getMaterializedRows().get(0);
+        assertEquals(columnStats.getField(5), "1"); // min
+        assertEquals(columnStats.getField(6), "6"); // max
+        assertEquals(columnStats.getField(3), 0.0); // nulls
+        assertEquals((double) columnStats.getField(2), 7.0d * (6.0d / 10.0d), 1E-8); // ndvs;
+
+        // LTE
+        statsTable = getQueryRunner().execute("SHOW STATS for (SELECT * FROM showstatsfilters WHERE i <= 7)");
+        columnStats = statsTable.getMaterializedRows().get(0);
+        assertEquals(columnStats.getField(5), "1"); // min
+        assertEquals(columnStats.getField(6), "7"); // max
+        assertEquals(columnStats.getField(3), 0.0); // nulls
+        assertEquals(columnStats.getField(2), 7.0d); // ndvs;
+
+        // GT
+        statsTable = getQueryRunner().execute("SHOW STATS for (SELECT * FROM showstatsfilters WHERE i > 7)");
+        columnStats = statsTable.getMaterializedRows().get(0);
+        assertEquals(columnStats.getField(5), null); // min
+        assertEquals(columnStats.getField(6), null); // max
+        assertEquals(columnStats.getField(3), null); // nulls
+        assertEquals(columnStats.getField(2), null); // ndvs;
+
+        // GTE
+        statsTable = getQueryRunner().execute("SHOW STATS for (SELECT * FROM showstatsfilters WHERE i >= 7)");
+        columnStats = statsTable.getMaterializedRows().get(0);
+        assertEquals(columnStats.getField(5), "7"); // min
+        assertEquals(columnStats.getField(6), "7"); // max
+        assertEquals(columnStats.getField(3), 0.0); // nulls
+        assertEquals((double) columnStats.getField(2), 7.0d * (4.0d / 10.0d), 1E-8); // ndvs;
+
+        assertQuerySucceeds("DROP TABLE showstatsfilters");
+    }
+
+    @Test
+    public void testMetadataDeleteOnUnPartitionedTableWithDeleteFiles()
+    {
+        String tableName = "test_v2_row_delete_" + randomTableSuffix();
+        try {
+            assertUpdate("CREATE TABLE " + tableName + "(a int, b varchar) WITH (format_version = '2', delete_mode = 'merge-on-read')");
+            assertUpdate("INSERT INTO " + tableName + " VALUES (1, '1001'), (2, '1002'), (3, '1003')", 3);
+
+            // execute row level deletion
+            assertUpdate("DELETE FROM " + tableName + " WHERE b in ('1002', '1003')", 2);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (1, '1001')");
+
+            Table icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 1);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 1);
+
+            // execute whole table metadata deletion
+            assertUpdate("DELETE FROM " + tableName, 1);
+            assertQuery("SELECT count(*) FROM " + tableName, "VALUES 0");
+
+            icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 0);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 0);
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testMetadataDeleteOnPartitionedTableWithDeleteFiles()
+    {
+        String tableName = "test_v2_row_delete_" + randomTableSuffix();
+        try {
+            assertUpdate("CREATE TABLE " + tableName + "(a int, b varchar) WITH (format_version = '2', delete_mode = 'merge-on-read', partitioning = ARRAY['a'])");
+            assertUpdate("INSERT INTO " + tableName + " VALUES (1, '1001'), (2, '1002'), (3, '1003')", 3);
+
+            // execute row level deletion
+            assertUpdate("DELETE FROM " + tableName + " WHERE b in ('1002', '1003')", 2);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (1, '1001')");
+
+            Table icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 3);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 2);
+
+            // execute metadata deletion with filter
+            assertUpdate("DELETE FROM " + tableName + " WHERE a in (2, 3)", 0);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (1, '1001')");
+
+            icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 1);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 0);
+
+            // execute whole table metadata deletion
+            assertUpdate("DELETE FROM " + tableName, 1);
+            assertQuery("SELECT count(*) FROM " + tableName, "VALUES 0");
+
+            icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 0);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 0);
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testMetadataDeleteOnV2MorTableWithEmptyUnsupportedSpecs()
+    {
+        String tableName = "test_empty_partition_spec_table";
+        try {
+            // Create a table with no partition
+            assertUpdate("CREATE TABLE " + tableName + " (a INTEGER, b VARCHAR) WITH (format_version = '2', delete_mode = 'merge-on-read')");
+
+            // Do not insert data, and evaluate the partition spec by adding a partition column `c`
+            assertUpdate("ALTER TABLE " + tableName + " ADD COLUMN c INTEGER WITH (partitioning = 'identity')");
+
+            // Insert data under the new partition spec
+            assertUpdate("INSERT INTO " + tableName + " VALUES (1, '1001', 1), (2, '1002', 2), (3, '1003', 3), (4, '1004', 4)", 4);
+
+            Table icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 4);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 0);
+
+            // Do metadata delete on partition column `c`, because the initial partition spec contains no data
+            assertUpdate("DELETE FROM " + tableName + " WHERE c in (1, 3)", 2);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (2, '1002', 2), (4, '1004', 4)");
+
+            icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 2);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 0);
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testMetadataDeleteOnV2MorTableWithUnsupportedSpecsWhoseDataAllDeleted()
+    {
+        String tableName = "test_data_deleted_partition_spec_table";
+        try {
+            // Create a table with partition column `a`, and insert some data under this partition spec
+            assertUpdate("CREATE TABLE " + tableName + " (a INTEGER, b VARCHAR) WITH (format_version = '2', delete_mode = 'merge-on-read', partitioning = ARRAY['a'])");
+            assertUpdate("INSERT INTO " + tableName + " VALUES (1, '1001'), (2, '1002')", 2);
+
+            Table icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 2);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 0);
+
+            // Evaluate the partition spec by adding a partition column `c`, and insert some data under the new partition spec
+            assertUpdate("ALTER TABLE " + tableName + " ADD COLUMN c INTEGER WITH (partitioning = 'identity')");
+            assertUpdate("INSERT INTO " + tableName + " VALUES (3, '1003', 3), (4, '1004', 4), (5, '1005', 5)", 3);
+
+            icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 5);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 0);
+
+            // Execute row level delete with filter on column `c`, because we have data with old partition spec
+            assertUpdate("DELETE FROM " + tableName + " WHERE c > 3", 2);
+            icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 5);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 2);
+
+            // Do metadata delete on column `a`, because all partition specs contains partition column `a`
+            assertUpdate("DELETE FROM " + tableName + " WHERE a in (1, 2)", 2);
+            icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 3);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 2);
+
+            // Then do metadata delete on column `c`, because the old partition spec contains no data now
+            assertUpdate("DELETE FROM " + tableName + " WHERE c > 3", 0);
+            assertQuery("SELECT * FROM " + tableName, "VALUES (3, '1003', 3)");
+            icebergTable = loadTable(tableName);
+            assertHasDataFiles(icebergTable.currentSnapshot(), 1);
+            assertHasDeleteFiles(icebergTable.currentSnapshot(), 0);
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
     private void testCheckDeleteFiles(Table icebergTable, int expectedSize, List<FileContent> expectedFileContent)
     {
         // check delete file list
@@ -1265,7 +1594,8 @@ public class IcebergDistributedTestBase
     private void writePositionDeleteToNationTable(Table icebergTable, String dataFilePath, long deletePos)
             throws IOException
     {
-        File metastoreDir = getDistributedQueryRunner().getCoordinator().getDataDirectory().toFile();
+        Path dataDirectory = getDistributedQueryRunner().getCoordinator().getDataDirectory();
+        File metastoreDir = getIcebergDataDirectoryPath(dataDirectory, catalogType.name(), new IcebergConfig().getFileFormat(), false).toFile();
         org.apache.hadoop.fs.Path metadataDir = new org.apache.hadoop.fs.Path(metastoreDir.toURI());
         String deleteFileName = "delete_file_" + UUID.randomUUID();
         FileSystem fs = getHdfsEnvironment().getFileSystem(new HdfsContext(SESSION), metadataDir);
@@ -1296,7 +1626,8 @@ public class IcebergDistributedTestBase
     private void writeEqualityDeleteToNationTable(Table icebergTable, Map<String, Object> overwriteValues, Map<String, Object> partitionValues)
             throws Exception
     {
-        File metastoreDir = getDistributedQueryRunner().getCoordinator().getDataDirectory().toFile();
+        Path dataDirectory = getDistributedQueryRunner().getCoordinator().getDataDirectory();
+        File metastoreDir = getIcebergDataDirectoryPath(dataDirectory, catalogType.name(), new IcebergConfig().getFileFormat(), false).toFile();
         org.apache.hadoop.fs.Path metadataDir = new org.apache.hadoop.fs.Path(metastoreDir.toURI());
         String deleteFileName = "delete_file_" + UUID.randomUUID();
         FileSystem fs = getHdfsEnvironment().getFileSystem(new HdfsContext(SESSION), metadataDir);
@@ -1322,7 +1653,7 @@ public class IcebergDistributedTestBase
         icebergTable.newRowDelta().addDeletes(writer.toDeleteFile()).commit();
     }
 
-    protected static HdfsEnvironment getHdfsEnvironment()
+    public static HdfsEnvironment getHdfsEnvironment()
     {
         HiveClientConfig hiveClientConfig = new HiveClientConfig();
         MetastoreClientConfig metastoreClientConfig = new MetastoreClientConfig();
@@ -1359,14 +1690,9 @@ public class IcebergDistributedTestBase
         Path dataDirectory = getDistributedQueryRunner().getCoordinator().getDataDirectory();
         switch (catalogType) {
             case HIVE:
-                return dataDirectory
-                        .resolve(TEST_DATA_DIRECTORY)
-                        .getParent()
-                        .resolve(TEST_CATALOG_DIRECTORY)
-                        .toFile();
             case HADOOP:
             case NESSIE:
-                return dataDirectory.toFile();
+                return getIcebergDataDirectoryPath(dataDirectory, catalogType.name(), new IcebergConfig().getFileFormat(), false).toFile();
         }
 
         throw new PrestoException(NOT_SUPPORTED, "Unsupported Presto Iceberg catalog type " + catalogType);
@@ -1380,5 +1706,25 @@ public class IcebergDistributedTestBase
             sessionBuilder.setTimeZoneKey(TimeZoneKey.getTimeZoneKey(zoneId));
         }
         return sessionBuilder.build();
+    }
+
+    private void testWithAllFileFormats(Session session, BiConsumer<Session, FileFormat> test)
+    {
+        test.accept(session, FileFormat.PARQUET);
+        test.accept(session, FileFormat.ORC);
+    }
+
+    private void assertHasDataFiles(Snapshot snapshot, int dataFilesCount)
+    {
+        Map<String, String> map = snapshot.summary();
+        int totalDataFiles = Integer.valueOf(map.get(TOTAL_DATA_FILES_PROP));
+        assertEquals(totalDataFiles, dataFilesCount);
+    }
+
+    private void assertHasDeleteFiles(Snapshot snapshot, int deleteFilesCount)
+    {
+        Map<String, String> map = snapshot.summary();
+        int totalDeleteFiles = Integer.valueOf(map.get(TOTAL_DELETE_FILES_PROP));
+        assertEquals(totalDeleteFiles, deleteFilesCount);
     }
 }

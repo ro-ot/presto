@@ -54,6 +54,26 @@ namespace facebook::presto {
 
 namespace {
 
+// Repeatedly calls for cleanOldTasks() for a while to ensure that we overcome a
+// potential race condition where we call cleanOldTasks() before some Tasks are
+// ready to be cleaned.
+void waitForAllOldTasksToBeCleaned(
+    TaskManager* taskManager,
+    uint64_t maxWaitUs) {
+  taskManager->cleanOldTasks();
+
+  uint64_t waitUs = 0;
+  while (taskManager->getNumTasks() > 0) {
+    constexpr uint64_t kWaitInternalUs = 1'000;
+    std::this_thread::sleep_for(std::chrono::microseconds(kWaitInternalUs));
+    waitUs += kWaitInternalUs;
+    taskManager->cleanOldTasks();
+    if (waitUs >= maxWaitUs) {
+      break;
+    }
+  }
+}
+
 // Generates task ID in Presto-compatible format.
 class TaskIdGenerator {
  public:
@@ -158,8 +178,6 @@ void setAggregationSpillConfig(
   queryConfigs.emplace(core::QueryConfig::kAggregationSpillEnabled, "true");
 }
 
-static const uint64_t kGB = 1024 * 1024 * 1024ULL;
-
 class TaskManagerTest : public testing::Test {
  public:
   static void SetUpTestCase() {
@@ -191,7 +209,7 @@ class TaskManagerTest : public testing::Test {
     exec::ExchangeSource::registerFactory(
         [cpuExecutor = exchangeCpuExecutor_,
          ioExecutor = exchangeIoExecutor_,
-         connectionPools = connectionPools_](
+         connPool = connPool_](
             const std::string& taskId,
             int destination,
             std::shared_ptr<exec::ExchangeQueue> queue,
@@ -203,7 +221,7 @@ class TaskManagerTest : public testing::Test {
               pool,
               cpuExecutor.get(),
               ioExecutor.get(),
-              connectionPools.get(),
+              connPool.get(),
               nullptr);
         });
     if (!isRegisteredVectorSerde()) {
@@ -400,7 +418,8 @@ class TaskManagerTest : public testing::Test {
     protocol::TaskSource source;
     source.planNodeId = sourceId;
     for (auto& filePath : filePaths) {
-      source.splits.emplace_back(makeSplit(filePath->path, splitSequenceId++));
+      source.splits.emplace_back(
+          makeSplit(filePath->getPath(), splitSequenceId++));
     }
     source.noMoreSplits = noMoreSplits;
     return source;
@@ -573,15 +592,16 @@ class TaskManagerTest : public testing::Test {
   static std::shared_ptr<exec::test::TempDirectoryPath> setupSpillPath() {
     auto spillDirectory = exec::test::TempDirectoryPath::create();
     auto sysConfigFilePath =
-        fmt::format("{}/config.properties", spillDirectory->path);
+        fmt::format("{}/config.properties", spillDirectory->getPath());
     auto fileSystem = filesystems::getFileSystem(sysConfigFilePath, nullptr);
     auto sysConfigFile = fileSystem->openFileForWrite(sysConfigFilePath);
     SystemConfig::instance()->setValue(
-        std::string(SystemConfig::kSpillerSpillPath), spillDirectory->path);
+        std::string(SystemConfig::kSpillerSpillPath),
+        spillDirectory->getPath());
     sysConfigFile->close();
 
     auto nodeConfigFilePath =
-        fmt::format("{}/node.properties", spillDirectory->path);
+        fmt::format("{}/node.properties", spillDirectory->getPath());
     auto nodeConfigFile = fileSystem->openFileForWrite(nodeConfigFilePath);
     nodeConfigFile->append(fmt::format(
         "{}={}\n{}={}",
@@ -601,7 +621,12 @@ class TaskManagerTest : public testing::Test {
     auto queryCtx =
         taskManager_->getQueryContextManager()->findOrCreateQueryCtx(
             taskId, {});
-    return exec::Task::create(taskId, planFragment, 0, std::move(queryCtx));
+    return exec::Task::create(
+        taskId,
+        planFragment,
+        0,
+        std::move(queryCtx),
+        exec::Task::ExecutionMode::kParallel);
   }
 
   std::unique_ptr<protocol::TaskInfo> createOrUpdateTask(
@@ -639,8 +664,8 @@ class TaskManagerTest : public testing::Test {
           8,
           std::make_shared<folly::NamedThreadFactory>("HTTPSrvIO"));
   long splitSequenceId_{0};
-  std::shared_ptr<ConnectionPools> connectionPools_ =
-      std::make_shared<ConnectionPools>();
+  std::shared_ptr<http::HttpClientConnectionPool> connPool_ =
+      std::make_shared<http::HttpClientConnectionPool>();
 };
 
 // Runs "select * from t where c0 % 5 = 0" query.
@@ -649,7 +674,7 @@ TEST_F(TaskManagerTest, tableScanAllSplitsAtOnce) {
   auto filePaths = makeFilePaths(5);
   auto vectors = makeVectors(filePaths.size(), 1'000);
   for (int i = 0; i < filePaths.size(); i++) {
-    writeToFile(filePaths[i]->path, vectors[i]);
+    writeToFile(filePaths[i]->getPath(), vectors[i]);
   }
   duckDbQueryRunner_.createTable("tmp", vectors);
 
@@ -675,7 +700,7 @@ TEST_F(TaskManagerTest, fecthFromFinishedTask) {
   auto filePaths = makeFilePaths(5);
   auto vectors = makeVectors(filePaths.size(), 1'000);
   for (int i = 0; i < filePaths.size(); i++) {
-    writeToFile(filePaths[i]->path, vectors[i]);
+    writeToFile(filePaths[i]->getPath(), vectors[i]);
   }
   duckDbQueryRunner_.createTable("tmp", vectors);
 
@@ -792,7 +817,7 @@ TEST_F(TaskManagerTest, taskCleanupWithPendingResultData) {
   auto filePaths = makeFilePaths(5);
   auto vectors = makeVectors(filePaths.size(), 1'000);
   for (int i = 0; i < filePaths.size(); i++) {
-    writeToFile(filePaths[i]->path, vectors[i]);
+    writeToFile(filePaths[i]->getPath(), vectors[i]);
   }
 
   auto planFragment = exec::test::PlanBuilder()
@@ -847,7 +872,7 @@ TEST_F(TaskManagerTest, tableScanOneSplitAtATime) {
   auto filePaths = makeFilePaths(5);
   auto vectors = makeVectors(filePaths.size(), 1'000);
   for (int i = 0; i < filePaths.size(); i++) {
-    writeToFile(filePaths[i]->path, vectors[i]);
+    writeToFile(filePaths[i]->getPath(), vectors[i]);
   }
   duckDbQueryRunner_.createTable("tmp", vectors);
 
@@ -881,7 +906,7 @@ TEST_F(TaskManagerTest, tableScanMultipleTasks) {
   auto filePaths = makeFilePaths(5);
   auto vectors = makeVectors(filePaths.size(), 1'000);
   for (int i = 0; i < filePaths.size(); i++) {
-    writeToFile(filePaths[i]->path, vectors[i]);
+    writeToFile(filePaths[i]->getPath(), vectors[i]);
   }
   duckDbQueryRunner_.createTable("tmp", vectors);
 
@@ -941,10 +966,7 @@ TEST_F(TaskManagerTest, emptyFile) {
     if (not taskStatus->failures.empty()) {
       EXPECT_EQ(1, taskStatus->failures.size());
       const auto& failure = taskStatus->failures.front();
-      EXPECT_THAT(
-          failure.message,
-          testing::ContainsRegex(
-              "fileLength_ > 0 ORC file is empty Split \\[.*\\] Task scan\\.0\\.0\\.1\\.0"));
+      EXPECT_THAT(failure.message, testing::ContainsRegex("ORC file is empty"));
       EXPECT_EQ("VeloxException", failure.type);
       break;
     }
@@ -956,7 +978,7 @@ TEST_F(TaskManagerTest, countAggregation) {
   auto filePaths = makeFilePaths(5);
   auto vectors = makeVectors(filePaths.size(), 1'000);
   for (int i = 0; i < filePaths.size(); i++) {
-    writeToFile(filePaths[i]->path, vectors[i]);
+    writeToFile(filePaths[i]->getPath(), vectors[i]);
   }
   duckDbQueryRunner_.createTable("tmp", vectors);
 
@@ -969,7 +991,7 @@ TEST_F(TaskManagerTest, distributedSort) {
   auto filePaths = makeFilePaths(5);
   auto vectors = makeVectors(filePaths.size(), 1'000);
   for (int i = 0; i < filePaths.size(); i++) {
-    writeToFile(filePaths[i]->path, vectors[i]);
+    writeToFile(filePaths[i]->getPath(), vectors[i]);
   }
   duckDbQueryRunner_.createTable("tmp", vectors);
 
@@ -1041,7 +1063,7 @@ TEST_F(TaskManagerTest, outOfQueryUserMemory) {
   auto filePaths = makeFilePaths(5);
   auto vectors = makeVectors(filePaths.size(), 1'000);
   for (auto i = 0; i < filePaths.size(); i++) {
-    writeToFile(filePaths[i]->path, vectors[i]);
+    writeToFile(filePaths[i]->getPath(), vectors[i]);
   }
   duckDbQueryRunner_.createTable("tmp", vectors);
 
@@ -1163,7 +1185,7 @@ TEST_F(TaskManagerTest, aggregationSpill) {
   }
   std::vector<RowVectorPtr> vectors;
   for (int i = 0; i < filePaths.size(); ++i) {
-    writeToFile(filePaths[i]->path, batches[i]);
+    writeToFile(filePaths[i]->getPath(), batches[i]);
     std::move(
         batches[i].begin(), batches[i].end(), std::back_inserter(vectors));
   }
@@ -1179,7 +1201,7 @@ TEST_F(TaskManagerTest, aggregationSpill) {
     int32_t spillPct{0};
     if (doSpill) {
       spillDirectory = TaskManagerTest::setupSpillPath();
-      taskManager_->setBaseSpillDirectory(spillDirectory->path);
+      taskManager_->setBaseSpillDirectory(spillDirectory->getPath());
       spillPct = 100;
       queryConfigs.emplace(core::QueryConfig::kSpillEnabled, "true");
       queryConfigs.emplace(core::QueryConfig::kAggregationSpillEnabled, "true");
@@ -1338,10 +1360,14 @@ TEST_F(TaskManagerTest, testCumulativeMemory) {
                                 .values(batches)
                                 .partitionedOutput({}, 1)
                                 .planFragment();
-  auto queryCtx = std::make_shared<core::QueryCtx>(driverExecutor_.get());
+  auto queryCtx = core::QueryCtx::create(driverExecutor_.get());
   const protocol::TaskId taskId = "scan.0.0.1.0";
-  auto veloxTask =
-      Task::create(taskId, std::move(planFragment), 0, std::move(queryCtx));
+  auto veloxTask = Task::create(
+      taskId,
+      std::move(planFragment),
+      0,
+      std::move(queryCtx),
+      Task::ExecutionMode::kParallel);
 
   const uint64_t startTimeMs = velox::getCurrentTimeMs();
   auto prestoTask = std::make_unique<PrestoTask>(taskId, "fakeId");
@@ -1360,7 +1386,7 @@ TEST_F(TaskManagerTest, testCumulativeMemory) {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
-  const auto memoryUsage = veloxTask->queryCtx()->pool()->currentBytes();
+  const auto memoryUsage = veloxTask->queryCtx()->pool()->usedBytes();
   ASSERT_GT(memoryUsage, 0);
 
   const uint64_t lastTimeMs = velox::getCurrentTimeMs();
@@ -1374,8 +1400,7 @@ TEST_F(TaskManagerTest, testCumulativeMemory) {
   // The initial reported cumulative memory must be less than the expected value
   // below.
   ASSERT_LE(
-      lastCumulativeTotalMemory,
-      memoryUsage * (lastTimeMs - startTimeMs) / 1'000);
+      lastCumulativeTotalMemory, memoryUsage * (lastTimeMs - startTimeMs));
   // Presto native doesn't differentiate user and system memory.
   ASSERT_EQ(
       lastCumulativeTotalMemory, prestoTaskInfo.stats.cumulativeUserMemory);
@@ -1394,8 +1419,7 @@ TEST_F(TaskManagerTest, testCumulativeMemory) {
   ASSERT_EQ(prestoTaskInfo.stats.systemMemoryReservationInBytes, 0);
   ASSERT_LE(
       prestoTaskInfo.stats.cumulativeTotalMemory,
-      lastCumulativeTotalMemory +
-          memoryUsage * (currentTimeMs - lastTimeMs) / 1'000);
+      lastCumulativeTotalMemory + memoryUsage * (currentTimeMs - lastTimeMs));
   ASSERT_LT(
       lastCumulativeTotalMemory, prestoTaskInfo.stats.cumulativeTotalMemory);
   ASSERT_EQ(
@@ -1527,7 +1551,7 @@ TEST_F(TaskManagerTest, buildSpillDirectoryFailure) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
       }
     }
-    taskManager_->cleanOldTasks();
+    waitForAllOldTasksToBeCleaned(taskManager_.get(), 3'000'000);
     velox::exec::test::waitForAllTasksToBeDeleted(3'000'000);
     ASSERT_TRUE(taskManager_->tasks().empty());
   }

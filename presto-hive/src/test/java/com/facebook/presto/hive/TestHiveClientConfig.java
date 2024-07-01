@@ -38,6 +38,7 @@ import static com.facebook.presto.hive.HiveStorageFormat.DWRF;
 import static com.facebook.presto.hive.HiveStorageFormat.ORC;
 import static com.facebook.presto.hive.TestHiveUtil.nonDefaultTimeZone;
 import static io.airlift.units.DataSize.Unit.BYTE;
+import static io.airlift.units.DataSize.Unit.MEGABYTE;
 
 public class TestHiveClientConfig
 {
@@ -162,7 +163,11 @@ public class TestHiveClientConfig
                 .setQuickStatsReaperExpiry(new Duration(5, TimeUnit.MINUTES))
                 .setParquetQuickStatsFileMetadataFetchTimeout(new Duration(60, TimeUnit.SECONDS))
                 .setMaxConcurrentQuickStatsCalls(100)
-                .setMaxConcurrentParquetQuickStatsCalls(500));
+                .setMaxConcurrentParquetQuickStatsCalls(500)
+                .setCteVirtualBucketCount(128)
+                .setSkipEmptyFilesEnabled(false)
+                .setAffinitySchedulingFileSectionSize(new DataSize(256, MEGABYTE))
+                .setLegacyTimestampBucketing(false));
     }
 
     @Test
@@ -287,6 +292,10 @@ public class TestHiveClientConfig
                 .put("hive.quick-stats.parquet.file-metadata-fetch-timeout", "30s")
                 .put("hive.quick-stats.parquet.max-concurrent-calls", "399")
                 .put("hive.quick-stats.max-concurrent-calls", "101")
+                .put("hive.cte-virtual-bucket-count", "256")
+                .put("hive.affinity-scheduling-file-section-size", "512MB")
+                .put("hive.skip-empty-files", "true")
+                .put("hive.legacy-timestamp-bucketing", "true")
                 .build();
 
         HiveClientConfig expected = new HiveClientConfig()
@@ -406,7 +415,12 @@ public class TestHiveClientConfig
                 .setQuickStatsReaperExpiry(new Duration(15, TimeUnit.MINUTES))
                 .setParquetQuickStatsFileMetadataFetchTimeout(new Duration(30, TimeUnit.SECONDS))
                 .setMaxConcurrentParquetQuickStatsCalls(399)
-                .setMaxConcurrentQuickStatsCalls(101);
+                .setMaxConcurrentQuickStatsCalls(101)
+                .setAffinitySchedulingFileSectionSize(new DataSize(512, MEGABYTE))
+                .setSkipEmptyFilesEnabled(true)
+                .setCteVirtualBucketCount(256)
+                .setAffinitySchedulingFileSectionSize(new DataSize(512, MEGABYTE))
+                .setLegacyTimestampBucketing(true);
 
         ConfigAssertions.assertFullMapping(properties, expected);
     }

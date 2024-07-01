@@ -451,7 +451,8 @@ public class TestOrcBatchPageSourceMemoryTracking
                     fileSplit.getLength(),
                     Instant.now().toEpochMilli(),
                     Optional.empty(),
-                    ImmutableMap.of());
+                    ImmutableMap.of(),
+                    0);
 
             OrcBatchPageSourceFactory orcPageSourceFactory = new OrcBatchPageSourceFactory(
                     FUNCTION_AND_TYPE_MANAGER,
@@ -498,7 +499,7 @@ public class TestOrcBatchPageSourceMemoryTracking
             SourceOperatorFactory sourceOperatorFactory = new TableScanOperatorFactory(
                     0,
                     new PlanNodeId("0"),
-                    (session, split, table, columnHandles) -> pageSource,
+                    (session, split, table, columnHandles, runtimeStats) -> pageSource,
                     table,
                     columns.stream().map(columnHandle -> (ColumnHandle) columnHandle).collect(toList()));
             SourceOperator operator = sourceOperatorFactory.createOperator(driverContext);
@@ -523,7 +524,7 @@ public class TestOrcBatchPageSourceMemoryTracking
                     0,
                     new PlanNodeId("test"),
                     new PlanNodeId("0"),
-                    (session, split, table, columnHandles) -> pageSource,
+                    (session, split, table, columnHandles, runtimeStats) -> pageSource,
                     cursorProcessor,
                     pageProcessor,
                     table,

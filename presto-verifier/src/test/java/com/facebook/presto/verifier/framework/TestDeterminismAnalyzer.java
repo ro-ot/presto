@@ -19,6 +19,7 @@ import com.facebook.presto.sql.parser.SqlParser;
 import com.facebook.presto.sql.parser.SqlParserOptions;
 import com.facebook.presto.sql.tree.QualifiedName;
 import com.facebook.presto.verifier.checksum.ChecksumValidator;
+import com.facebook.presto.verifier.prestoaction.DefaultClientInfoFactory;
 import com.facebook.presto.verifier.prestoaction.JdbcPrestoAction;
 import com.facebook.presto.verifier.prestoaction.JdbcUrlSelector;
 import com.facebook.presto.verifier.prestoaction.PrestoAction;
@@ -65,7 +66,7 @@ public class TestDeterminismAnalyzer
 
     private static DeterminismAnalyzer createDeterminismAnalyzer(String mutableCatalogPattern)
     {
-        QueryConfiguration configuration = new QueryConfiguration(CATALOG, SCHEMA, Optional.of("user"), Optional.empty(), Optional.empty());
+        QueryConfiguration configuration = new QueryConfiguration(CATALOG, SCHEMA, Optional.of("user"), Optional.empty(), Optional.empty(), Optional.empty());
         VerificationContext verificationContext = VerificationContext.create(SUITE, NAME);
         VerifierConfig verifierConfig = new VerifierConfig().setTestId("test-id");
         RetryConfig retryConfig = new RetryConfig();
@@ -81,15 +82,16 @@ public class TestDeterminismAnalyzer
                 queryActionsConfig.getChecksumTimeout(),
                 retryConfig,
                 retryConfig,
-                verifierConfig);
+                new DefaultClientInfoFactory(verifierConfig));
         QueryRewriter queryRewriter = new QueryRewriter(
                 sqlParser,
                 typeManager,
                 prestoAction,
                 ImmutableMap.of(CONTROL, QualifiedName.of("tmp_verifier_c"), TEST, QualifiedName.of("tmp_verifier_t")),
-                ImmutableMap.of());
+                ImmutableMap.of(),
+                ImmutableMap.of(CONTROL, false, TEST, false));
         ChecksumValidator checksumValidator = createChecksumValidator(verifierConfig);
-        SourceQuery sourceQuery = new SourceQuery("test", "", "", "", configuration, configuration);
+        SourceQuery sourceQuery = new SourceQuery("test", "", "", "", Optional.empty(), Optional.empty(), configuration, configuration);
 
         return new DeterminismAnalyzer(
                 sourceQuery,

@@ -18,6 +18,7 @@ import com.facebook.presto.spi.statistics.ConnectorHistogram;
 import com.facebook.presto.spi.statistics.Estimate;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.base.Suppliers;
 import com.google.common.collect.BoundType;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Range;
@@ -25,18 +26,18 @@ import com.google.common.collect.RangeSet;
 import com.google.common.collect.TreeRangeSet;
 
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.function.Supplier;
 
 import static com.facebook.presto.cost.HistogramCalculator.calculateFilterFactor;
 import static com.facebook.presto.util.MoreMath.max;
 import static com.facebook.presto.util.MoreMath.min;
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static java.lang.Double.NEGATIVE_INFINITY;
 import static java.lang.Double.POSITIVE_INFINITY;
 import static java.lang.Double.isFinite;
@@ -50,11 +51,11 @@ import static java.util.Objects.requireNonNull;
  * <br>
  * For example, assume a source histogram represents a uniform distribution
  * over the range [0, 100]. Next, assume a query with multiple filters such as
- * <code>x < 10 OR x > 75</code>. This translates to two disjoint ranges over
- * the histogram of [0, 10) and (75, 100], representing roughly 35% of the
+ * <code>x < 10 OR x > 85</code>. This translates to two disjoint ranges over
+ * the histogram of [0, 10) and (85, 100], representing roughly 35% of the
  * values in the original dataset. Using the example above, a cumulative
  * probability for value 5 represents 5% of the original dataset, but 20% (1/5)
- * of the range of constrained dataset. Similarly, all values in [10, 75] should
+ * of the range of constrained dataset. Similarly, all values in [10, 85] should
  * compute their cumulative probability as 40% (2/5).
  * <br>
  * The goal of this class is to implement the {@link ConnectorHistogram} API
@@ -70,20 +71,24 @@ public class DisjointRangeDomainHistogram
     private final ConnectorHistogram source;
     // use RangeSet as the internal representation of the ranges, but the constructor arguments
     // use StatisticRange to support serialization and deserialization.
-    private final RangeSet<Double> rangeSet;
-    private final Range<Double> sourceSpan;
+    private final Supplier<RangeSet<Double>> rangeSet;
+    private final Set<Range<Double>> ranges;
 
     @JsonCreator
     public DisjointRangeDomainHistogram(@JsonProperty("source") ConnectorHistogram source, @JsonProperty("ranges") Collection<StatisticRange> ranges)
     {
-        this(source, ranges.stream().map(StatisticRange::toRange).collect(Collectors.toSet()));
+        this(source, ranges.stream().map(StatisticRange::toRange).collect(toImmutableSet()));
     }
 
-    public DisjointRangeDomainHistogram(ConnectorHistogram source, Iterable<Range<Double>> ranges)
+    public DisjointRangeDomainHistogram(ConnectorHistogram source, Set<Range<Double>> ranges)
     {
         this.source = requireNonNull(source, "source is null");
-        this.sourceSpan = getSourceSpan(source);
-        this.rangeSet = TreeRangeSet.create(ranges).subRangeSet(sourceSpan);
+        this.ranges = requireNonNull(ranges, "ranges is null");
+        this.rangeSet = Suppliers.memoize(() -> {
+            RangeSet<Double> rangeSet = TreeRangeSet.create();
+            rangeSet.addAll(ranges);
+            return rangeSet.subRangeSet(getSourceSpan(this.source));
+        });
     }
 
     private static Range<Double> getSourceSpan(ConnectorHistogram source)
@@ -102,7 +107,7 @@ public class DisjointRangeDomainHistogram
     @JsonProperty
     public Set<StatisticRange> getRanges()
     {
-        return rangeSet.asRanges().stream().map(StatisticRange::fromRange).collect(Collectors.toSet());
+        return rangeSet.get().asRanges().stream().map(StatisticRange::fromRange).collect(toImmutableSet());
     }
 
     public DisjointRangeDomainHistogram(ConnectorHistogram source)
@@ -130,8 +135,8 @@ public class DisjointRangeDomainHistogram
             return Estimate.of(0.0);
         }
         Range<Double> input = Range.range(span.lowerEndpoint(), span.lowerBoundType(), value, inclusive ? BoundType.CLOSED : BoundType.OPEN);
-        Estimate fullSetOverlap = calculateRangeSetOverlap(rangeSet);
-        RangeSet<Double> spanned = rangeSet.subRangeSet(input);
+        Estimate fullSetOverlap = calculateRangeSetOverlap(rangeSet.get());
+        RangeSet<Double> spanned = rangeSet.get().subRangeSet(input);
         Estimate spannedOverlap = calculateRangeSetOverlap(spanned);
 
         return spannedOverlap.flatMap(spannedProbability ->
@@ -193,7 +198,7 @@ public class DisjointRangeDomainHistogram
             return source.inverseCumulativeProbability(1.0).map(sourceMax -> min(span.upperEndpoint(), sourceMax));
         }
 
-        Estimate totalCumulativeEstimate = calculateRangeSetOverlap(rangeSet);
+        Estimate totalCumulativeEstimate = calculateRangeSetOverlap(rangeSet.get());
         if (totalCumulativeEstimate.isUnknown()) {
             return Estimate.unknown();
         }
@@ -206,7 +211,7 @@ public class DisjointRangeDomainHistogram
         double lastRangeEstimateSourceDomain = 0.0;
         Range<Double> currentRange = null;
         // find the range where the percentile falls
-        for (Range<Double> range : rangeSet.asRanges()) {
+        for (Range<Double> range : rangeSet.get().asRanges()) {
             Estimate rangeEstimate = getRangeProbability(range);
             if (rangeEstimate.isUnknown()) {
                 return Estimate.unknown();
@@ -243,8 +248,10 @@ public class DisjointRangeDomainHistogram
      */
     public DisjointRangeDomainHistogram addDisjunction(StatisticRange other)
     {
-        Set<Range<Double>> ranges = new HashSet<>(rangeSet.asRanges());
-        ranges.add(other.toRange());
+        Set<Range<Double>> ranges = ImmutableSet.<Range<Double>>builder()
+                .addAll(this.ranges)
+                .add(other.toRange())
+                .build();
         return new DisjointRangeDomainHistogram(source, ranges);
     }
 
@@ -257,7 +264,7 @@ public class DisjointRangeDomainHistogram
      */
     public DisjointRangeDomainHistogram addConjunction(StatisticRange other)
     {
-        return new DisjointRangeDomainHistogram(source, rangeSet.subRangeSet(other.toRange()).asRanges());
+        return new DisjointRangeDomainHistogram(source, rangeSet.get().subRangeSet(other.toRange()).asRanges());
     }
 
     /**
@@ -312,7 +319,7 @@ public class DisjointRangeDomainHistogram
     private Optional<Range<Double>> getSpan()
     {
         try {
-            return Optional.of(rangeSet.span());
+            return Optional.of(rangeSet.get().span());
         }
         catch (NoSuchElementException e) {
             return Optional.empty();
@@ -324,7 +331,6 @@ public class DisjointRangeDomainHistogram
     {
         return toStringHelper(this)
                 .add("source", this.source)
-                .add("sourceSpan", this.sourceSpan)
                 .add("rangeSet", this.rangeSet)
                 .toString();
     }
@@ -340,13 +346,14 @@ public class DisjointRangeDomainHistogram
         }
         DisjointRangeDomainHistogram other = (DisjointRangeDomainHistogram) o;
         return Objects.equals(source, other.source) &&
-                Objects.equals(sourceSpan, other.sourceSpan) &&
-                Objects.equals(rangeSet, other.rangeSet);
+                // getRanges() flattens and creates the minimal range set which
+                // determines whether two histograms are truly equal
+                Objects.equals(getRanges(), other.getRanges());
     }
 
     @Override
     public int hashCode()
     {
-        return hash(source, sourceSpan, rangeSet);
+        return hash(source, getRanges());
     }
 }

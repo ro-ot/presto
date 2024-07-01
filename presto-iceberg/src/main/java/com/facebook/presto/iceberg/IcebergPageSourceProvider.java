@@ -617,7 +617,10 @@ public class IcebergPageSourceProvider
                             systemMemoryUsage,
                             stats,
                             runtimeStats,
-                            isRowPositionList),
+                            isRowPositionList,
+                            // Iceberg doesn't support row IDs
+                            new byte[0],
+                            ""),
                     Optional.empty(),
                     Optional.empty());
         }
@@ -712,7 +715,8 @@ public class IcebergPageSourceProvider
             ConnectorSplit connectorSplit,
             ConnectorTableLayoutHandle layout,
             List<ColumnHandle> desiredColumns,
-            SplitContext splitContext)
+            SplitContext splitContext,
+            RuntimeStats runtimeStats)
     {
         IcebergTableLayoutHandle icebergLayout = (IcebergTableLayoutHandle) layout;
         if (icebergLayout.isPushdownFilterEnabled()) {
@@ -761,7 +765,7 @@ public class IcebergPageSourceProvider
                 split.getLength(),
                 split.getFileFormat(),
                 regularColumns,
-                table.getPredicate(),
+                icebergLayout.getValidPredicate(),
                 splitContext.isCacheable());
         ConnectorPageSource dataPageSource = connectorPageSourceWithRowPositions.getConnectorPageSource();
 

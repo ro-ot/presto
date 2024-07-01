@@ -114,6 +114,8 @@ The following steps summarize the workflow of Verifier.
        * Artificial names are used for unnamed columns.
     * Rewrites ``Insert`` and ``CreateTableAsSelect`` queries to have their table names replaced.
        * Constructs a setup query to create the table necessary for an ``Insert`` query.
+    * Rewrites function calls according to ``nondeterministic-function-substitutes``
+      if the configuration is set.
 
 * **Query Execution**
     * Conceptually, Verifier is configured with a control cluster and a test cluster. However, they
@@ -179,7 +181,7 @@ queries.
        * Array checksum of the value set
 * **Row Columns**
     * Checksums row fields recursively according to the type of the fields.
-* For all other column types, generates a simple checksum using the :func:`checksum` function.
+* For all other column types, generates a simple checksum using the :func:`!checksum` function.
 
 Determinism
 -----------
@@ -274,6 +276,10 @@ Name                                        Description
                                             are emitted to ``stdout``.
 ``control.table-prefix``                    The table prefix to be appended to the control target table.
 ``test.table-prefix``                       The table prefix to be appended to the test target table.
+``control.reuse-table``                     If ``true``, reuse the output table of the control source Insert and CreateTableAsSelect
+                                            query. Otherwise, run the control source query and write to a temporary table.
+``test.reuse-table``                        If ``true``, reuse the output table of the test source Insert and CreateTableAsSelect
+                                            query. Otherwise, run the test source query and write to a temporary table.
 ``test-id``                                 A string to be attached to output events.
 ``max-concurrency``                         Maximum number of concurrent verifications.
 ``suite-repetition``                        How many times a suite is verified.
@@ -290,6 +296,19 @@ Name                                        Description
                                             It only applies to ``Insert`` and ``CreateTableAsSelect`` queries.
                                             It would verify each partition's data checksum if the inserted table is partitioned.
                                             It would verify each bucket's data checksum if the inserted table is bucketed.
+``function-substitutes``                    Specification of function substitutions, in the format of
+                                            ``/foo(c0,_)/bar(c0)/,/fred(c0,c1)/baz(qux(c1,c0))/,/foobar(c0)/if(qux(c1),bar(c0),baz(c1))/,...``,
+                                            where ``foo(c0, _)`` would be substituted by ``bar(c0)``,
+                                            with the declared arguments applied to the corresponding positions.
+
+                                            Concatenate function substitutions with a comma.
+
+                                            Select a function substitute that has the return type and argument types
+                                            compatible with those of the original function, to produce a valid source query. For
+                                            example, ``/array_agg(z)/array_sort(array_agg(z))/,/approx_percentile(x,y)/avg(x)/``.
+
+                                            Declare the function arguments as identifiers if they need to be applied to
+                                            the function substitute.
 =========================================== ===============================================================================
 
 

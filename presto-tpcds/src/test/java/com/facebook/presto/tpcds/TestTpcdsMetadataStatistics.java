@@ -178,7 +178,7 @@ public class TestTpcdsMetadataStatistics
 
         Entry<ColumnHandle, ColumnStatistics> entry = tableStatistics.getColumnStatistics().entrySet().iterator().next();
 
-        TableStatistics expectedTableStatistics = tableStatistics.builder()
+        TableStatistics expectedTableStatistics = TableStatistics.builder()
                 .setRowCount(tableStatistics.getRowCount())
                 .setColumnStatistics(entry.getKey(), entry.getValue())
                 .build();
@@ -208,7 +208,8 @@ public class TestTpcdsMetadataStatistics
                 "        \"max\" : 30.0\n" +
                 "      }\n" +
                 "    }\n" +
-                "  }\n" +
+                "  },\n" +
+                "  \"confidence\" : \"HIGH\"\n" +
                 "}");
     }
 

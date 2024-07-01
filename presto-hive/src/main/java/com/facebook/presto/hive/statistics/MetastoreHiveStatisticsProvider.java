@@ -81,6 +81,7 @@ import static com.facebook.presto.hive.HiveSessionProperties.isStatisticsEnabled
 import static com.facebook.presto.hive.metastore.MetastoreUtil.getMetastoreHeaders;
 import static com.facebook.presto.hive.metastore.MetastoreUtil.isUserDefinedTypeEncodingEnabled;
 import static com.facebook.presto.hive.metastore.PartitionStatistics.empty;
+import static com.facebook.presto.spi.statistics.SourceInfo.ConfidenceLevel.HIGH;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -123,7 +124,17 @@ public class MetastoreHiveStatisticsProvider
             return ImmutableMap.of();
         }
         boolean unpartitioned = hivePartitions.stream().anyMatch(partition -> partition.getPartitionId().equals(UNPARTITIONED_ID));
-        MetastoreContext metastoreContext = new MetastoreContext(session.getIdentity(), session.getQueryId(), session.getClientInfo(), session.getSource(), getMetastoreHeaders(session), isUserDefinedTypeEncodingEnabled(session), metastore.getColumnConverterProvider(), session.getWarningCollector(), session.getRuntimeStats());
+        MetastoreContext metastoreContext = new MetastoreContext(
+                session.getIdentity(),
+                session.getQueryId(),
+                session.getClientInfo(),
+                session.getClientTags(),
+                session.getSource(),
+                getMetastoreHeaders(session),
+                isUserDefinedTypeEncodingEnabled(session),
+                metastore.getColumnConverterProvider(),
+                session.getWarningCollector(),
+                session.getRuntimeStats());
         if (unpartitioned) {
             checkArgument(hivePartitions.size() == 1, "expected only one hive partition");
             PartitionStatistics tableStatistics = metastore.getTableStatistics(metastoreContext, table.getSchemaName(), table.getTableName());
@@ -202,7 +213,7 @@ public class MetastoreHiveStatisticsProvider
             }
             result.setColumnStatistics(columnHandle, columnStatistics.build());
         });
-        return result.build();
+        return result.setConfidenceLevel(HIGH).build();
     }
 
     @VisibleForTesting
@@ -459,7 +470,7 @@ public class MetastoreHiveStatisticsProvider
             }
             result.setColumnStatistics(columnHandle, columnStatistics);
         }
-        return result.build();
+        return result.setConfidenceLevel(HIGH).build();
     }
 
     @VisibleForTesting

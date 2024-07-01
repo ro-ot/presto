@@ -140,14 +140,6 @@ public class ClassLoaderSafeConnectorMetadata
     }
 
     @Override
-    public ConnectorPartitioningHandle getPartitioningHandleForCteMaterialization(ConnectorSession session, int partitionCount, List<Type> partitionTypes)
-    {
-        try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
-            return delegate.getPartitioningHandleForCteMaterialization(session, partitionCount, partitionTypes);
-        }
-    }
-
-    @Override
     public ConnectorTableLayoutHandle getAlternativeLayoutHandle(ConnectorSession session, ConnectorTableLayoutHandle tableLayoutHandle, ConnectorPartitioningHandle partitioningHandle)
     {
         try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
@@ -778,10 +770,10 @@ public class ClassLoaderSafeConnectorMetadata
     }
 
     @Override
-    public void dropConstraint(ConnectorSession session, ConnectorTableHandle tableHandle, String constraintName)
+    public void dropConstraint(ConnectorSession session, ConnectorTableHandle tableHandle, Optional<String> constraintName, Optional<String> columnName)
     {
         try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
-            delegate.dropConstraint(session, tableHandle, constraintName);
+            delegate.dropConstraint(session, tableHandle, constraintName, columnName);
         }
     }
 

@@ -18,8 +18,6 @@ import com.facebook.presto.spi.statistics.ConnectorHistogram;
 import com.facebook.presto.spi.statistics.Estimate;
 import com.google.common.math.DoubleMath;
 
-import java.util.Optional;
-
 import static java.lang.Double.isFinite;
 import static java.lang.Double.isNaN;
 import static java.lang.Math.min;
@@ -53,8 +51,8 @@ public class HistogramCalculator
         Estimate max = histogram.inverseCumulativeProbability(1.0);
 
         // range is either above or below histogram
-        if ((!max.isUnknown() && max.getValue() < range.getLow())
-                || (!min.isUnknown() && min.getValue() > range.getHigh())) {
+        if ((!max.isUnknown() && (openHigh ? max.getValue() <= range.getLow() : max.getValue() < range.getLow()))
+                || (!min.isUnknown() && (openLow ? min.getValue() >= range.getHigh() : min.getValue() > range.getHigh()))) {
             return Estimate.of(0.0);
         }
 
@@ -101,7 +99,7 @@ public class HistogramCalculator
             if (((lowPercentile.isUnknown() && !highPercentile.isUnknown()) ||
                     (!lowPercentile.isUnknown() && highPercentile.isUnknown())) &&
                     isFinite(range.length())) {
-                return useHeuristics ? Estimate.of(StatisticRange.INFINITE_TO_FINITE_RANGE_INTERSECT_OVERLAP_HEURISTIC_FACTOR) : Estimate.unknown();
+                return Estimate.of(StatisticRange.INFINITE_TO_FINITE_RANGE_INTERSECT_OVERLAP_HEURISTIC_FACTOR);
             }
 
             if (range.length() == 0.0) {
@@ -124,11 +122,6 @@ public class HistogramCalculator
             if (!useHeuristics) {
                 return Estimate.zero();
             }
-            // If one of the bounds is unknown, but both percentiles are equal,
-            // it's likely that a heuristic value was returned
-            if (max.isUnknown() || min.isUnknown()) {
-                return totalDistinctValues.flatMap(distinct -> lowPercentile.map(lowPercent -> distinct * lowPercent));
-            }
 
             return totalDistinctValues.map(distinct -> 1.0 / distinct);
         }
@@ -140,12 +133,9 @@ public class HistogramCalculator
                 return Estimate.unknown();
             }
 
-            if (totalDistinctValues.equals(Estimate.zero())) {
-                return Estimate.of(1.0);
-            }
             return totalDistinctValues.flatMap(totalDistinct -> {
                 if (DoubleMath.fuzzyEquals(totalDistinct, 0.0, 1E-6)) {
-                    return Estimate.unknown();
+                    return Estimate.of(1.0);
                 }
                 return Estimate.of(min(1.0, range.getDistinctValuesCount() / totalDistinct));
             })
@@ -153,15 +143,6 @@ public class HistogramCalculator
             .or(() -> Estimate.of(StatisticRange.INFINITE_TO_INFINITE_RANGE_INTERSECT_OVERLAP_HEURISTIC_FACTOR));
         }
 
-        return Optional.of(lowPercentile)
-                .filter(lowPercent -> !lowPercent.isUnknown())
-                .map(Estimate::getValue)
-                .map(lowPercent -> Optional.of(highPercentile)
-                        .filter(highPercent -> !highPercent.isUnknown())
-                        .map(Estimate::getValue)
-                        .map(highPercent -> highPercent - lowPercent)
-                        .map(Estimate::of)
-                        .orElseGet(() -> Estimate.of(1.0)))
-                .orElse(highPercentile);
+        return lowPercentile.flatMap(lowPercent -> highPercentile.map(highPercent -> highPercent - lowPercent));
     }
 }

@@ -30,7 +30,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
+import static com.facebook.presto.iceberg.CatalogType.HIVE;
 import static com.facebook.presto.iceberg.IcebergQueryRunner.ICEBERG_CATALOG;
+import static com.facebook.presto.iceberg.IcebergQueryRunner.getIcebergDataDirectoryPath;
 import static com.facebook.presto.testing.TestingSession.testSessionBuilder;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -50,7 +52,8 @@ public class TestIcebergSystemTables
                 .build();
         DistributedQueryRunner queryRunner = DistributedQueryRunner.builder(session).build();
 
-        Path catalogDirectory = queryRunner.getCoordinator().getDataDirectory().resolve("iceberg_data").resolve("catalog");
+        Path dataDirectory = queryRunner.getCoordinator().getDataDirectory();
+        Path catalogDirectory = getIcebergDataDirectoryPath(dataDirectory, HIVE.name(), new IcebergConfig().getFileFormat(), false);
 
         queryRunner.installPlugin(new IcebergPlugin());
         Map<String, String> icebergProperties = ImmutableMap.<String, String>builder()
@@ -89,6 +92,9 @@ public class TestIcebergSystemTables
         assertUpdate("INSERT INTO test_schema.test_table_drop_column VALUES ('c', 3, CAST('2019-09-09' AS DATE)), ('a', 4, CAST('2019-09-10' AS DATE)), ('b', 5, CAST('2019-09-10' AS DATE))", 3);
         assertQuery("SELECT count(*) FROM test_schema.test_table_drop_column", "VALUES 6");
         assertUpdate("ALTER TABLE test_schema.test_table_drop_column DROP COLUMN _varchar");
+
+        assertUpdate("CREATE TABLE test_schema.test_table_orc (_bigint BIGINT) WITH (format_version = '1', format = 'ORC')");
+        assertUpdate("INSERT INTO test_schema.test_table_orc VALUES (0), (1), (2)", 3);
     }
 
     @Test
@@ -206,6 +212,28 @@ public class TestIcebergSystemTables
                 .anySatisfy(row -> assertThat(row)
                         .isEqualTo(new MaterializedRow(MaterializedResult.DEFAULT_PRECISION, "write.format.default", "PARQUET")))
                 .anySatisfy(row -> assertThat(row)
+                        .isEqualTo(new MaterializedRow(MaterializedResult.DEFAULT_PRECISION, "write.parquet.compression-codec", "GZIP")))
+                .anySatisfy(row -> assertThat(row)
+                        .isEqualTo(new MaterializedRow(MaterializedResult.DEFAULT_PRECISION, "commit.retry.num-retries", "4")));
+    }
+
+    protected void checkORCFormatTableProperties(String tableName, String deleteMode)
+    {
+        assertQuery(String.format("SHOW COLUMNS FROM test_schema.\"%s$properties\"", tableName),
+                "VALUES ('key', 'varchar', '', '')," + "('value', 'varchar', '', '')");
+        assertQuery(String.format("SELECT COUNT(*) FROM test_schema.\"%s$properties\"", tableName), "VALUES 5");
+        List<MaterializedRow> materializedRows = computeActual(getSession(),
+                String.format("SELECT * FROM test_schema.\"%s$properties\"", tableName)).getMaterializedRows();
+
+        assertThat(materializedRows).hasSize(5);
+        assertThat(materializedRows)
+                .anySatisfy(row -> assertThat(row)
+                        .isEqualTo(new MaterializedRow(MaterializedResult.DEFAULT_PRECISION, "write.delete.mode", deleteMode)))
+                .anySatisfy(row -> assertThat(row)
+                        .isEqualTo(new MaterializedRow(MaterializedResult.DEFAULT_PRECISION, "write.format.default", "ORC")))
+                .anySatisfy(row -> assertThat(row)
+                        .isEqualTo(new MaterializedRow(MaterializedResult.DEFAULT_PRECISION, "write.orc.compression-codec", "ZLIB")))
+                .anySatisfy(row -> assertThat(row)
                         .isEqualTo(new MaterializedRow(MaterializedResult.DEFAULT_PRECISION, "write.parquet.compression-codec", "zstd")))
                 .anySatisfy(row -> assertThat(row)
                         .isEqualTo(new MaterializedRow(MaterializedResult.DEFAULT_PRECISION, "commit.retry.num-retries", "4")));
@@ -217,6 +245,7 @@ public class TestIcebergSystemTables
         // Test table properties for all supported format versions
         checkTableProperties("test_table_v1", "copy-on-write");
         checkTableProperties("test_table", "merge-on-read");
+        checkORCFormatTableProperties("test_table_orc", "copy-on-write");
     }
 
     @Test
@@ -242,6 +271,7 @@ public class TestIcebergSystemTables
     {
         assertUpdate("DROP TABLE IF EXISTS test_schema.test_table");
         assertUpdate("DROP TABLE IF EXISTS test_schema.test_table_v1");
+        assertUpdate("DROP TABLE IF EXISTS test_schema.test_table_orc");
         assertUpdate("DROP TABLE IF EXISTS test_schema.test_table_multilevel_partitions");
         assertUpdate("DROP TABLE IF EXISTS test_schema.test_table_drop_column");
         assertUpdate("DROP TABLE IF EXISTS test_schema.test_table_add_column");

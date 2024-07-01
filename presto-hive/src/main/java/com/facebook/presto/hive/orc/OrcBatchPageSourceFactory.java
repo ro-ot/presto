@@ -63,6 +63,7 @@ import static com.facebook.presto.hive.HiveCommonSessionProperties.getOrcMaxRead
 import static com.facebook.presto.hive.HiveCommonSessionProperties.getOrcTinyStripeThreshold;
 import static com.facebook.presto.hive.HiveCommonSessionProperties.isOrcBloomFiltersEnabled;
 import static com.facebook.presto.hive.HiveCommonSessionProperties.isOrcZstdJniDecompressionEnabled;
+import static com.facebook.presto.hive.HiveUtil.checkRowIDPartitionComponent;
 import static com.facebook.presto.hive.HiveUtil.getPhysicalHiveColumnHandles;
 import static com.facebook.presto.hive.orc.OrcPageSourceFactoryUtils.getOrcDataSource;
 import static com.facebook.presto.hive.orc.OrcPageSourceFactoryUtils.getOrcReader;
@@ -71,6 +72,7 @@ import static com.facebook.presto.orc.DwrfEncryptionProvider.NO_ENCRYPTION;
 import static com.facebook.presto.orc.OrcEncoding.ORC;
 import static com.facebook.presto.orc.OrcReader.INITIAL_BATCH_SIZE;
 import static com.google.common.base.Preconditions.checkArgument;
+import static java.util.Collections.nCopies;
 import static java.util.Objects.requireNonNull;
 
 public class OrcBatchPageSourceFactory
@@ -134,7 +136,8 @@ public class OrcBatchPageSourceFactory
             TupleDomain<HiveColumnHandle> effectivePredicate,
             DateTimeZone hiveStorageTimeZone,
             HiveFileContext hiveFileContext,
-            Optional<EncryptionInformation> encryptionInformation)
+            Optional<EncryptionInformation> encryptionInformation,
+            Optional<byte[]> rowIDPartitionComponent)
     {
         if (!OrcSerde.class.getName().equals(storage.getStorageFormat().getSerDe())) {
             return Optional.empty();
@@ -169,7 +172,8 @@ public class OrcBatchPageSourceFactory
                         .build(),
                 encryptionInformation,
                 NO_ENCRYPTION,
-                session));
+                session,
+                rowIDPartitionComponent));
     }
 
     public static ConnectorPageSource createOrcPageSource(
@@ -191,9 +195,11 @@ public class OrcBatchPageSourceFactory
             OrcReaderOptions orcReaderOptions,
             Optional<EncryptionInformation> encryptionInformation,
             DwrfEncryptionProvider dwrfEncryptionProvider,
-            ConnectorSession session)
+            ConnectorSession session,
+            Optional<byte[]> rowIDPartitionComponent)
     {
         checkArgument(domainCompactionThreshold >= 1, "domainCompactionThreshold must be at least 1");
+        checkRowIDPartitionComponent(columns, rowIDPartitionComponent);
 
         OrcDataSource orcDataSource = getOrcDataSource(session, fileSplit, hdfsEnvironment, configuration, hiveFileContext, stats);
         Path path = new Path(fileSplit.getPath());
@@ -235,6 +241,11 @@ public class OrcBatchPageSourceFactory
                     systemMemoryUsage,
                     INITIAL_BATCH_SIZE);
 
+            byte[] partitionID = rowIDPartitionComponent.orElse(new byte[0]);
+            String rowGroupID = path.getName();
+
+            // none of the columns are row numbers
+            List<Boolean> isRowNumberList = nCopies(physicalColumns.size(), false);
             return new OrcBatchPageSource(
                     recordReader,
                     reader.getOrcDataSource(),
@@ -242,7 +253,10 @@ public class OrcBatchPageSourceFactory
                     typeManager,
                     systemMemoryUsage,
                     stats,
-                    hiveFileContext.getStats());
+                    hiveFileContext.getStats(),
+                    isRowNumberList,
+                    partitionID,
+                    rowGroupID);
         }
         catch (Exception e) {
             try {

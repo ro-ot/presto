@@ -15,6 +15,7 @@ package com.facebook.presto.hive;
 
 import com.facebook.presto.cache.CacheConfig;
 import com.facebook.presto.common.Page;
+import com.facebook.presto.common.RuntimeStats;
 import com.facebook.presto.common.Subfield;
 import com.facebook.presto.common.predicate.TupleDomain;
 import com.facebook.presto.common.type.TestingTypeManager;
@@ -135,7 +136,8 @@ public class TestHivePageSourceProvider
                 10,
                 Instant.now().toEpochMilli(),
                 Optional.empty(),
-                ImmutableMap.of());
+                ImmutableMap.of(),
+                0);
         HiveSplit split = new HiveSplit(
                 fileSplit,
                 SCHEMA_NAME,
@@ -220,7 +222,8 @@ public class TestHivePageSourceProvider
                 200,
                 Instant.now().toEpochMilli(),
                 Optional.empty(),
-                customSplitInfo);
+                customSplitInfo,
+                0);
         Optional<ConnectorPageSource> pageSource = HivePageSourceProvider.createHivePageSource(
                 ImmutableSet.of(recordCursorProvider),
                 ImmutableSet.of(hiveBatchPageSourceFactory),
@@ -272,7 +275,8 @@ public class TestHivePageSourceProvider
                 200,
                 Instant.now().toEpochMilli(),
                 Optional.empty(),
-                ImmutableMap.of());
+                ImmutableMap.of(),
+                0);
 
         Optional<ConnectorPageSource> pageSource = HivePageSourceProvider.createHivePageSource(
                 ImmutableSet.of(recordCursorProvider),
@@ -314,13 +318,15 @@ public class TestHivePageSourceProvider
     public void testUsesPageSourceForPartition()
     {
         HivePageSourceProvider pageSourceProvider = createPageSourceProvider();
+        RuntimeStats runtimeStats = new RuntimeStats();
         ConnectorPageSource pageSource = pageSourceProvider.createPageSource(
                 new HiveTransactionHandle(),
                 SESSION,
                 getHiveSplit(ORC),
                 getHiveTableLayout(false, false, false),
                 ImmutableList.of(LONG_COLUMN),
-                new SplitContext(false));
+                new SplitContext(false),
+                runtimeStats);
         assertTrue(pageSource instanceof HivePageSource, format("pageSource was %s", pageSource.getClass().getSimpleName()));
         assertTrue(((HivePageSource) pageSource).getPageSource() instanceof MockOrcBatchPageSource,
                 format("pageSoruce was %s", ((HivePageSource) pageSource).getPageSource().getClass().getSimpleName()));
@@ -331,7 +337,8 @@ public class TestHivePageSourceProvider
                 getHiveSplit(RCBINARY),
                 getHiveTableLayout(false, false, false),
                 ImmutableList.of(LONG_COLUMN),
-                new SplitContext(false));
+                new SplitContext(false),
+                runtimeStats);
         assertTrue(pageSource instanceof HivePageSource, format("pageSource  was %s", pageSource.getClass().getSimpleName()));
         assertTrue(((HivePageSource) pageSource).getPageSource() instanceof MockRcBinaryBatchPageSource,
                 format("pageSource  was %s", ((HivePageSource) pageSource).getPageSource().getClass().getSimpleName()));
@@ -342,7 +349,8 @@ public class TestHivePageSourceProvider
                 getHiveSplit(ORC),
                 getHiveTableLayout(true, false, false),
                 ImmutableList.of(LONG_COLUMN),
-                new SplitContext(false));
+                new SplitContext(false),
+                runtimeStats);
         assertTrue(pageSource instanceof MockOrcSelectivePageSource, format("pageSource  was %s", pageSource.getClass().getSimpleName()));
     }
 
@@ -356,7 +364,8 @@ public class TestHivePageSourceProvider
                 getHiveSplit(RCBINARY),
                 getHiveTableLayout(true, false, false),
                 ImmutableList.of(),
-                new SplitContext(false));
+                new SplitContext(false),
+                new RuntimeStats());
         assertTrue(pageSource instanceof FilteringPageSource, format("pageSource was %s", pageSource.getClass().getSimpleName()));
     }
 
@@ -370,7 +379,8 @@ public class TestHivePageSourceProvider
                 getHiveSplit(ORC),
                 getHiveTableLayout(true, true, false),
                 ImmutableList.of(LONG_AGGREGATED_COLUMN),
-                new SplitContext(false));
+                new SplitContext(false),
+                new RuntimeStats());
         assertTrue(pageSource instanceof MockOrcAggregatedPageSource, format("pageSource %s", pageSource.getClass().getSimpleName()));
     }
 
@@ -386,7 +396,8 @@ public class TestHivePageSourceProvider
                 getHiveSplit(RCBINARY),
                 getHiveTableLayout(false, true, false),
                 ImmutableList.of(LONG_AGGREGATED_COLUMN),
-                new SplitContext(false));
+                new SplitContext(false),
+                new RuntimeStats());
     }
 
     @Test(expectedExceptions = PrestoException.class,
@@ -402,7 +413,8 @@ public class TestHivePageSourceProvider
                 getHiveSplit(ORC),
                 getHiveTableLayout(false, true, true),
                 ImmutableList.of(LONG_AGGREGATED_COLUMN),
-                new SplitContext(false));
+                new SplitContext(false),
+                new RuntimeStats());
     }
 
     @Test(expectedExceptions = IllegalArgumentException.class, expectedExceptionsMessageRegExp = "Not all columns are of 'AGGREGATED' type")
@@ -415,7 +427,39 @@ public class TestHivePageSourceProvider
                 getHiveSplit(ORC),
                 getHiveTableLayout(false, true, false),
                 ImmutableList.of(LONG_COLUMN, LONG_AGGREGATED_COLUMN),
-                new SplitContext(false));
+                new SplitContext(false),
+                new RuntimeStats());
+    }
+
+    @Test
+    public void testCreatePageSource_withRowID()
+    {
+        HivePageSourceProvider pageSourceProvider = createPageSourceProvider();
+        HiveSplit hiveSplit = makeHiveSplit(ORC, Optional.of(new byte[20]));
+        try (HivePageSource pageSource = (HivePageSource) pageSourceProvider.createPageSource(
+                new HiveTransactionHandle(),
+                SESSION,
+                hiveSplit,
+                getHiveTableLayout(false, true, false),
+                ImmutableList.of(LONG_COLUMN, HiveColumnHandle.rowIdColumnHandle()),
+                new SplitContext(false),
+                new RuntimeStats())) {
+            assertEquals(0, pageSource.getCompletedBytes());
+        }
+    }
+
+    public void testCreatePageSource_withRowIDMissingPartitionComponent()
+    {
+        HivePageSourceProvider pageSourceProvider = createPageSourceProvider();
+        HiveSplit hiveSplit = getHiveSplit(ORC);
+        pageSourceProvider.createPageSource(
+                new HiveTransactionHandle(),
+                SESSION,
+                hiveSplit,
+                getHiveTableLayout(false, true, false),
+                ImmutableList.of(LONG_COLUMN, HiveColumnHandle.rowIdColumnHandle()),
+                new SplitContext(false),
+                new RuntimeStats());
     }
 
     private static ConnectorTableLayoutHandle getHiveTableLayout(boolean pushdownFilterEnabled, boolean partialAggregationsPushedDown, boolean footerStatsUnreliable)
@@ -442,13 +486,19 @@ public class TestHivePageSourceProvider
 
     private static HiveSplit getHiveSplit(HiveStorageFormat hiveStorageFormat)
     {
+        return makeHiveSplit(hiveStorageFormat, Optional.empty());
+    }
+
+    private static HiveSplit makeHiveSplit(HiveStorageFormat hiveStorageFormat, Optional<byte[]> rowIDPartitionComponent)
+    {
         HiveFileSplit fileSplit = new HiveFileSplit("file://test",
                 0,
                 10,
                 10,
                 Instant.now().toEpochMilli(),
                 Optional.empty(),
-                ImmutableMap.of());
+                ImmutableMap.of(),
+                0);
 
         return new HiveSplit(
                 fileSplit,
@@ -476,7 +526,7 @@ public class TestHivePageSourceProvider
                 Optional.empty(),
                 ImmutableSet.of(),
                 SplitWeight.standard(),
-                Optional.empty());
+                rowIDPartitionComponent);
     }
 
     static class MockHiveBatchPageSourceFactory
@@ -493,7 +543,8 @@ public class TestHivePageSourceProvider
                 TupleDomain<HiveColumnHandle> effectivePredicate,
                 DateTimeZone hiveStorageTimeZone,
                 HiveFileContext hiveFileContext,
-                Optional<EncryptionInformation> encryptionInformation)
+                Optional<EncryptionInformation> encryptionInformation,
+                Optional<byte[]> rowIdPartitionComponent)
         {
             return Optional.of(new MockPageSource());
         }
@@ -636,7 +687,18 @@ public class TestHivePageSourceProvider
             implements HiveBatchPageSourceFactory
     {
         @Override
-        public Optional<? extends ConnectorPageSource> createPageSource(Configuration configuration, ConnectorSession session, HiveFileSplit fileSplit, Storage storage, SchemaTableName tableName, Map<String, String> tableParameters, List<HiveColumnHandle> columns, TupleDomain<HiveColumnHandle> effectivePredicate, DateTimeZone hiveStorageTimeZone, HiveFileContext hiveFileContext, Optional<EncryptionInformation> encryptionInformation)
+        public Optional<? extends ConnectorPageSource> createPageSource(Configuration configuration,
+                ConnectorSession session,
+                HiveFileSplit fileSplit,
+                Storage storage,
+                SchemaTableName tableName,
+                Map<String, String> tableParameters,
+                List<HiveColumnHandle> columns,
+                TupleDomain<HiveColumnHandle> effectivePredicate,
+                DateTimeZone hiveStorageTimeZone,
+                HiveFileContext hiveFileContext,
+                Optional<EncryptionInformation> encryptionInformation,
+                Optional<byte[]> rowIdPartitionComponent)
         {
             if (!OrcSerde.class.getName().equals(storage.getStorageFormat().getSerDe())) {
                 return Optional.empty();
@@ -649,7 +711,25 @@ public class TestHivePageSourceProvider
             implements HiveSelectivePageSourceFactory
     {
         @Override
-        public Optional<? extends ConnectorPageSource> createPageSource(Configuration configuration, ConnectorSession session, HiveFileSplit fileSplit, Storage storage, List<HiveColumnHandle> columns, Map<Integer, String> prefilledValues, Map<Integer, HiveCoercer> coercers, Optional<BucketAdaptation> bucketAdaptation, List<Integer> outputColumns, TupleDomain<Subfield> domainPredicate, RowExpression remainingPredicate, DateTimeZone hiveStorageTimeZone, HiveFileContext hiveFileContext, Optional<EncryptionInformation> encryptionInformation, boolean appendRowNumberEnabled)
+        public Optional<? extends ConnectorPageSource> createPageSource(
+                Configuration configuration,
+                ConnectorSession session,
+                HiveFileSplit fileSplit,
+                Storage storage,
+                List<HiveColumnHandle> columns,
+                Map<Integer,
+                String> prefilledValues,
+                Map<Integer,
+                HiveCoercer> coercers,
+                Optional<BucketAdaptation> bucketAdaptation,
+                List<Integer> outputColumns,
+                TupleDomain<Subfield> domainPredicate,
+                RowExpression remainingPredicate,
+                DateTimeZone hiveStorageTimeZone,
+                HiveFileContext hiveFileContext,
+                Optional<EncryptionInformation> encryptionInformation,
+                boolean appendRowNumberEnabled,
+                Optional<byte[]> rowIDPartitionComponent)
         {
             if (!OrcSerde.class.getName().equals(storage.getStorageFormat().getSerDe())) {
                 return Optional.empty();
@@ -662,7 +742,7 @@ public class TestHivePageSourceProvider
             implements HiveAggregatedPageSourceFactory
     {
         @Override
-        public Optional<? extends ConnectorPageSource> createPageSource(Configuration configuration, ConnectorSession session, HiveFileSplit fileSplit, Storage storage, List<HiveColumnHandle> columns, HiveFileContext hiveFileContext, Optional<EncryptionInformation> encryptionInformation, boolean appendRowNumberEnabled)
+        public Optional<? extends ConnectorPageSource> createPageSource(Configuration configuration, ConnectorSession session, HiveFileSplit fileSplit, Storage storage, List<HiveColumnHandle> columns, HiveFileContext hiveFileContext, Optional<EncryptionInformation> encryptionInformation)
         {
             if (!OrcSerde.class.getName().equals(storage.getStorageFormat().getSerDe())) {
                 return Optional.empty();
@@ -674,8 +754,18 @@ public class TestHivePageSourceProvider
     private static class MockRcBinaryBatchPageSourceFactory
             implements HiveBatchPageSourceFactory
     {
-        @Override
-        public Optional<? extends ConnectorPageSource> createPageSource(Configuration configuration, ConnectorSession session, HiveFileSplit fileSplit, Storage storage, SchemaTableName tableName, Map<String, String> tableParameters, List<HiveColumnHandle> columns, TupleDomain<HiveColumnHandle> effectivePredicate, DateTimeZone hiveStorageTimeZone, HiveFileContext hiveFileContext, Optional<EncryptionInformation> encryptionInformation)
+        public Optional<? extends ConnectorPageSource> createPageSource(Configuration configuration,
+                ConnectorSession session,
+                HiveFileSplit fileSplit,
+                Storage storage,
+                SchemaTableName tableName,
+                Map<String, String> tableParameters,
+                List<HiveColumnHandle> columns,
+                TupleDomain<HiveColumnHandle> effectivePredicate,
+                DateTimeZone hiveStorageTimeZone,
+                HiveFileContext hiveFileContext,
+                Optional<EncryptionInformation> encryptionInformation,
+                Optional<byte[]> rowIdPartitionComponent)
         {
             if (!storage.getStorageFormat().getSerDe().equals(LazyBinaryColumnarSerDe.class.getName())) {
                 return Optional.empty();

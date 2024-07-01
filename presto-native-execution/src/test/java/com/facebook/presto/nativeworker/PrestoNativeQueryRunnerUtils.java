@@ -36,9 +36,9 @@ import java.util.UUID;
 import java.util.function.BiFunction;
 
 import static com.facebook.presto.hive.HiveTestUtils.getProperty;
-import static com.facebook.presto.iceberg.FileFormat.PARQUET;
 import static com.facebook.presto.iceberg.IcebergQueryRunner.createIcebergQueryRunner;
 import static com.facebook.presto.nativeworker.NativeQueryRunnerUtils.getNativeWorkerHiveProperties;
+import static com.facebook.presto.nativeworker.NativeQueryRunnerUtils.getNativeWorkerIcebergProperties;
 import static com.facebook.presto.nativeworker.NativeQueryRunnerUtils.getNativeWorkerSystemProperties;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -156,18 +156,14 @@ public class PrestoNativeQueryRunnerUtils
     public static QueryRunner createJavaIcebergQueryRunner(String storageFormat)
             throws Exception
     {
-        return createJavaIcebergQueryRunner(Optional.of(getNativeQueryRunnerParameters().dataDirectory), storageFormat, true);
+        return createJavaIcebergQueryRunner(Optional.of(getNativeQueryRunnerParameters().dataDirectory), storageFormat, false);
     }
 
     public static QueryRunner createJavaIcebergQueryRunner(Optional<Path> baseDataDirectory, String storageFormat, boolean addStorageFormatToPath)
             throws Exception
     {
         ImmutableMap.Builder<String, String> icebergPropertiesBuilder = new ImmutableMap.Builder<>();
-        icebergPropertiesBuilder
-                .put("hive.pushdown-filter-enabled", "true")
-                .put("hive.parquet.writer.version", "PARQUET_1_0");
-
-        Optional<Path> dataDirectory = addStorageFormatToPath ? baseDataDirectory.map(path -> Paths.get(path.toString() + '/' + storageFormat)) : baseDataDirectory;
+        icebergPropertiesBuilder.put("hive.parquet.writer.version", "PARQUET_1_0");
 
         DistributedQueryRunner queryRunner = createIcebergQueryRunner(
                 ImmutableMap.of(
@@ -181,7 +177,8 @@ public class PrestoNativeQueryRunnerUtils
                 false,
                 OptionalInt.empty(),
                 Optional.empty(),
-                dataDirectory);
+                baseDataDirectory,
+                addStorageFormatToPath);
 
         return queryRunner;
     }
@@ -192,6 +189,12 @@ public class PrestoNativeQueryRunnerUtils
         return createNativeIcebergQueryRunner(useThrift, ICEBERG_DEFAULT_STORAGE_FORMAT, Optional.empty());
     }
 
+    public static QueryRunner createNativeIcebergQueryRunner(boolean useThrift, boolean addStorageFormatToPath)
+            throws Exception
+    {
+        return createNativeIcebergQueryRunner(useThrift, ICEBERG_DEFAULT_STORAGE_FORMAT, Optional.empty(), addStorageFormatToPath);
+    }
+
     public static QueryRunner createNativeIcebergQueryRunner(boolean useThrift, String storageFormat)
             throws Exception
     {
@@ -199,6 +202,12 @@ public class PrestoNativeQueryRunnerUtils
     }
 
     public static QueryRunner createNativeIcebergQueryRunner(boolean useThrift, String storageFormat, Optional<String> remoteFunctionServerUds)
+            throws Exception
+    {
+        return createNativeIcebergQueryRunner(useThrift, storageFormat, remoteFunctionServerUds, false);
+    }
+
+    public static QueryRunner createNativeIcebergQueryRunner(boolean useThrift, String storageFormat, Optional<String> remoteFunctionServerUds, boolean addStorageFormatToPath)
             throws Exception
     {
         int cacheMaxSize = 0;
@@ -211,7 +220,7 @@ public class PrestoNativeQueryRunnerUtils
                 useThrift,
                 remoteFunctionServerUds,
                 storageFormat,
-                true);
+                addStorageFormatToPath);
     }
 
     public static QueryRunner createNativeIcebergQueryRunner(
@@ -226,7 +235,7 @@ public class PrestoNativeQueryRunnerUtils
             throws Exception
     {
         ImmutableMap<String, String> icebergProperties = ImmutableMap.<String, String>builder()
-                .putAll(getNativeWorkerHiveProperties(storageFormat))
+                .putAll(getNativeWorkerIcebergProperties())
                 .build();
 
         // Make query runner with external workers for tests
@@ -238,12 +247,13 @@ public class PrestoNativeQueryRunnerUtils
                         .putAll(getNativeWorkerSystemProperties())
                         .build(),
                 icebergProperties,
-                PARQUET,
+                FileFormat.valueOf(storageFormat),
                 false,
                 false,
                 OptionalInt.of(workerCount.orElse(4)),
                 getExternalWorkerLauncher("iceberg", prestoServerPath, cacheMaxSize, remoteFunctionServerUds),
-                addStorageFormatToPath ? dataDirectory.map(path -> Paths.get(path.toString() + '/' + storageFormat)) : dataDirectory);
+                dataDirectory,
+                addStorageFormatToPath);
     }
 
     public static QueryRunner createNativeQueryRunner(
@@ -369,8 +379,7 @@ public class PrestoNativeQueryRunnerUtils
                         log.info("Temp directory for Worker #%d: %s", workerIndex, tempDirectoryPath.toString());
                         int port = 1234 + workerIndex;
 
-                        // Write config files
-                        Files.write(tempDirectoryPath.resolve("velox.properties"), "".getBytes());
+                        // Write config file
                         String configProperties = format("discovery.uri=%s%n" +
                                 "presto.version=testversion%n" +
                                 "system-memory-gb=4%n" +
@@ -417,8 +426,8 @@ public class PrestoNativeQueryRunnerUtils
                         return new ProcessBuilder(prestoServerPath, "--logtostderr=1", "--v=1")
                                 .directory(tempDirectoryPath.toFile())
                                 .redirectErrorStream(true)
-                                .redirectOutput(ProcessBuilder.Redirect.to(tempDirectoryPath.resolve("worker." + workerIndex + ".out").toFile()))
-                                .redirectError(ProcessBuilder.Redirect.to(tempDirectoryPath.resolve("worker." + workerIndex + ".err").toFile()))
+                                .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+                                .redirectError(ProcessBuilder.Redirect.INHERIT)
                                 .start();
                     }
                     catch (IOException e) {

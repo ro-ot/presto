@@ -39,43 +39,28 @@ public class TestJsonPrestoQueryPlanFunctionUtils
                     "   \"estimates\" : [ {\n" +
                     "     \"outputRowCount\" : 0.0,\n" +
                     "     \"totalSize\" : \"NaN\",\n" +
-                    "     \"confident\" : false,\n" +
+                    "     \"confident\" : \"LOW\",\n" +
                     "     \"variableStatistics\" : {\n" +
                     "       \"a<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       },\n" +
                     "       \"b<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       },\n" +
                     "       \"b_1<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       }\n" +
                     "     },\n" +
                     "     \"joinNodeStatsEstimate\" : {\n" +
@@ -126,43 +111,28 @@ public class TestJsonPrestoQueryPlanFunctionUtils
                     "     \"estimates\" : [ {\n" +
                     "       \"outputRowCount\" : 0.0,\n" +
                     "       \"totalSize\" : \"NaN\",\n" +
-                    "       \"confident\" : true,\n" +
+                    "       \"confident\" : \"HIGH\",\n" +
                     "       \"variableStatistics\" : {\n" +
                     "         \"$hashvalue_21<bigint>\" : {\n" +
                     "           \"lowValue\" : \"NaN\",\n" +
                     "           \"highValue\" : \"NaN\",\n" +
                     "           \"nullsFraction\" : 1.0,\n" +
                     "           \"averageRowSize\" : 0.0,\n" +
-                    "           \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "           \"distinctValuesCount\" : 0.0\n" +
                     "         },\n" +
                     "         \"a_0<integer>\" : {\n" +
                     "           \"lowValue\" : \"NaN\",\n" +
                     "           \"highValue\" : \"NaN\",\n" +
                     "           \"nullsFraction\" : 1.0,\n" +
                     "           \"averageRowSize\" : 0.0,\n" +
-                    "           \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "           \"distinctValuesCount\" : 0.0\n" +
                     "         },\n" +
                     "         \"b_1<integer>\" : {\n" +
                     "           \"lowValue\" : \"NaN\",\n" +
                     "           \"highValue\" : \"NaN\",\n" +
                     "           \"nullsFraction\" : 1.0,\n" +
                     "           \"averageRowSize\" : 0.0,\n" +
-                    "           \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "           \"distinctValuesCount\" : 0.0\n" +
                     "         }\n" +
                     "       },\n" +
                     "       \"joinNodeStatsEstimate\" : {\n" +
@@ -184,43 +154,28 @@ public class TestJsonPrestoQueryPlanFunctionUtils
                     "   \"estimates\" : [ {\n" +
                     "     \"outputRowCount\" : 0.0,\n" +
                     "     \"totalSize\" : \"NaN\",\n" +
-                    "     \"confident\" : false,\n" +
+                    "     \"confident\" : \"LOW\",\n" +
                     "     \"variableStatistics\" : {\n" +
                     "       \"a<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       },\n" +
                     "       \"b<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       },\n" +
                     "       \"b_1<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       }\n" +
                     "     },\n" +
                     "     \"joinNodeStatsEstimate\" : {\n" +
@@ -250,31 +205,21 @@ public class TestJsonPrestoQueryPlanFunctionUtils
                     "   \"estimates\" : [ {\n" +
                     "     \"outputRowCount\" : 0.0,\n" +
                     "     \"totalSize\" : 0.0,\n" +
-                    "     \"confident\" : true,\n" +
+                    "     \"confident\" : \"HIGH\",\n" +
                     "     \"variableStatistics\" : {\n" +
                     "       \"a<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       },\n" +
                     "       \"b<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       }\n" +
                     "     },\n" +
                     "     \"joinNodeStatsEstimate\" : {\n" +
@@ -293,43 +238,28 @@ public class TestJsonPrestoQueryPlanFunctionUtils
                     "   }, {\n" +
                     "     \"outputRowCount\" : 0.0,\n" +
                     "     \"totalSize\" : \"NaN\",\n" +
-                    "     \"confident\" : true,\n" +
+                    "     \"confident\" : \"HIGH\",\n" +
                     "     \"variableStatistics\" : {\n" +
                     "       \"$hashvalue_20<bigint>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       },\n" +
                     "       \"a<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       },\n" +
                     "       \"b<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       }\n" +
                     "     },\n" +
                     "     \"joinNodeStatsEstimate\" : {\n" +
@@ -359,31 +289,21 @@ public class TestJsonPrestoQueryPlanFunctionUtils
                     "   \"estimates\" : [ {\n" +
                     "     \"outputRowCount\" : 0.0,\n" +
                     "     \"totalSize\" : 0.0,\n" +
-                    "     \"confident\" : true,\n" +
+                    "     \"confident\" : \"HIGH\",\n" +
                     "     \"variableStatistics\" : {\n" +
                     "       \"a_0<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       },\n" +
                     "       \"b_1<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       }\n" +
                     "     },\n" +
                     "     \"joinNodeStatsEstimate\" : {\n" +
@@ -402,43 +322,28 @@ public class TestJsonPrestoQueryPlanFunctionUtils
                     "   }, {\n" +
                     "     \"outputRowCount\" : 0.0,\n" +
                     "     \"totalSize\" : \"NaN\",\n" +
-                    "     \"confident\" : true,\n" +
+                    "     \"confident\" : \"HIGH\",\n" +
                     "     \"variableStatistics\" : {\n" +
                     "       \"$hashvalue_23<bigint>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       },\n" +
                     "       \"a_0<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       },\n" +
                     "       \"b_1<integer>\" : {\n" +
                     "         \"lowValue\" : \"NaN\",\n" +
                     "         \"highValue\" : \"NaN\",\n" +
                     "         \"nullsFraction\" : 1.0,\n" +
                     "         \"averageRowSize\" : 0.0,\n" +
-                    "         \"distinctValuesCount\" : 0.0,\n" +
-                    "         \"histogram\" : {\n" +
-                    "           \"@class\" : \"com.facebook.presto.cost.UniformDistributionHistogram\",\n" +
-                    "           \"lowValue\" : \"NaN\",\n" +
-                    "           \"highValue\" : \"NaN\"\n" +
-                    "         }\n" +
+                    "         \"distinctValuesCount\" : 0.0\n" +
                     "       }\n" +
                     "     },\n" +
                     "     \"joinNodeStatsEstimate\" : {\n" +

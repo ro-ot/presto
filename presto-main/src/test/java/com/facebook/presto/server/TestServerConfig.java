@@ -45,9 +45,11 @@ public class TestServerConfig
                 .setResourceManager(false)
                 .setCatalogServer(false)
                 .setCatalogServerEnabled(false)
+                .setCoordinatorSidecarEnabled(false)
                 .setPoolType(DEFAULT)
                 .setClusterStatsExpirationDuration(new Duration(0, MILLISECONDS))
-                .setNestedDataSerializationEnabled(true));
+                .setNestedDataSerializationEnabled(true)
+                .setClusterResourceGroupStateInfoExpirationDuration(new Duration(0, MILLISECONDS)));
     }
 
     @Test
@@ -65,9 +67,11 @@ public class TestServerConfig
                 .put("resource-manager", "true")
                 .put("catalog-server-enabled", "true")
                 .put("catalog-server", "true")
+                .put("coordinator-sidecar-enabled", "true")
                 .put("pool-type", "LEAF")
                 .put("cluster-stats-expiration-duration", "10s")
                 .put("nested-data-serialization-enabled", "false")
+                .put("cluster-resource-group-state-info-expiration-duration", "10s")
                 .build();
 
         ServerConfig expected = new ServerConfig()
@@ -82,9 +86,11 @@ public class TestServerConfig
                 .setResourceManager(true)
                 .setCatalogServer(true)
                 .setCatalogServerEnabled(true)
+                .setCoordinatorSidecarEnabled(true)
                 .setPoolType(LEAF)
                 .setClusterStatsExpirationDuration(new Duration(10, SECONDS))
-                .setNestedDataSerializationEnabled(false);
+                .setNestedDataSerializationEnabled(false)
+                .setClusterResourceGroupStateInfoExpirationDuration(new Duration(10, SECONDS));
 
         assertFullMapping(properties, expected);
     }

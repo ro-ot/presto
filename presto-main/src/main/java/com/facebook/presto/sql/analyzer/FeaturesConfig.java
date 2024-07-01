@@ -61,7 +61,8 @@ import static java.util.concurrent.TimeUnit.SECONDS;
         "deprecated.legacy-order-by",
         "deprecated.legacy-join-using",
         "use-legacy-scheduler",
-        "max-stage-retries"})
+        "max-stage-retries",
+        "deprecated.group-by-uses-equal"})
 public class FeaturesConfig
 {
     @VisibleForTesting
@@ -122,7 +123,6 @@ public class FeaturesConfig
     private boolean reduceAggForComplexTypesEnabled = true;
     private boolean legacyLogFunction;
     private boolean useAlternativeFunctionSignatures;
-    private boolean groupByUsesEqualTo;
     private boolean legacyTimestamp = true;
     private boolean legacyMapSubscript;
     private boolean legacyRowFieldOrdinalAccess;
@@ -307,8 +307,12 @@ public class FeaturesConfig
     private long kHyperLogLogAggregationGroupNumberLimit;
     private boolean limitNumberOfGroupsForKHyperLogLogAggregations = true;
     private boolean generateDomainFilters;
+    private boolean printEstimatedStatsFromCache;
     private CreateView.Security defaultViewSecurityMode = DEFINER;
     private boolean useHistograms;
+
+    private boolean useNewNanDefinition = true;
+    private boolean warnOnPossibleNans;
 
     public enum PartitioningPrecisionStrategy
     {
@@ -566,18 +570,6 @@ public class FeaturesConfig
     public boolean isUseAlternativeFunctionSignatures()
     {
         return useAlternativeFunctionSignatures;
-    }
-
-    @Config("deprecated.group-by-uses-equal")
-    public FeaturesConfig setGroupByUsesEqualTo(boolean value)
-    {
-        this.groupByUsesEqualTo = value;
-        return this;
-    }
-
-    public boolean isGroupByUsesEqualTo()
-    {
-        return groupByUsesEqualTo;
     }
 
     @Config("deprecated.legacy-timestamp")
@@ -3103,6 +3095,19 @@ public class FeaturesConfig
         return this;
     }
 
+    public boolean isPrintEstimatedStatsFromCache()
+    {
+        return this.printEstimatedStatsFromCache;
+    }
+
+    @Config("optimizer.print-estimated-stats-from-cache")
+    @ConfigDescription("In the end of query optimization, print the estimation stats from cache populated during optimization instead of calculating from ground")
+    public FeaturesConfig setPrintEstimatedStatsFromCache(boolean printEstimatedStatsFromCache)
+    {
+        this.printEstimatedStatsFromCache = printEstimatedStatsFromCache;
+        return this;
+    }
+
     public boolean isUseHistograms()
     {
         return useHistograms;
@@ -3113,6 +3118,32 @@ public class FeaturesConfig
     public FeaturesConfig setUseHistograms(boolean useHistograms)
     {
         this.useHistograms = useHistograms;
+        return this;
+    }
+
+    public boolean getUseNewNanDefinition()
+    {
+        return useNewNanDefinition;
+    }
+
+    @Config("use-new-nan-definition")
+    @ConfigDescription("Enable functions to use the new consistent NaN definition where NaN=NaN and is sorted largest")
+    public FeaturesConfig setUseNewNanDefinition(boolean useNewNanDefinition)
+    {
+        this.useNewNanDefinition = useNewNanDefinition;
+        return this;
+    }
+
+    public boolean getWarnOnCommonNanPatterns()
+    {
+        return warnOnPossibleNans;
+    }
+
+    @Config("warn-on-common-nan-patterns")
+    @ConfigDescription("Give warnings for operations on DOUBLE/REAL types where NaN issues are common")
+    public FeaturesConfig setWarnOnCommonNanPatterns(boolean warnOnPossibleNans)
+    {
+        this.warnOnPossibleNans = warnOnPossibleNans;
         return this;
     }
 }

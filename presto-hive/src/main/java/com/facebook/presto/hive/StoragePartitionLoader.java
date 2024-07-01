@@ -65,6 +65,7 @@ import static com.facebook.presto.hive.HiveMetadata.shouldCreateFilesForMissingB
 import static com.facebook.presto.hive.HiveSessionProperties.getMaxInitialSplitSize;
 import static com.facebook.presto.hive.HiveSessionProperties.isFileSplittable;
 import static com.facebook.presto.hive.HiveSessionProperties.isOrderBasedExecutionEnabled;
+import static com.facebook.presto.hive.HiveSessionProperties.isSkipEmptyFilesEnabled;
 import static com.facebook.presto.hive.HiveSessionProperties.isUseListDirectoryCache;
 import static com.facebook.presto.hive.HiveUtil.buildDirectoryContextProperties;
 import static com.facebook.presto.hive.HiveUtil.getFooterCount;
@@ -304,8 +305,17 @@ public class StoragePartitionLoader
                 }
             }
         }
-        InternalHiveSplitFactory splitFactory = getHiveSplitFactory(fs, inputFormat, s3SelectPushdownEnabled, storage, path, partitionName,
-                partitionKeys, partitionDataColumnCount, partition, bucketConversionRequiresWorkerParticipation ? bucketConversion : Optional.empty());
+        InternalHiveSplitFactory splitFactory = getHiveSplitFactory(
+                fs,
+                inputFormat,
+                s3SelectPushdownEnabled,
+                storage,
+                path,
+                partitionName,
+                partitionKeys,
+                partitionDataColumnCount,
+                partition,
+                bucketConversionRequiresWorkerParticipation ? bucketConversion : Optional.empty());
 
         if (shouldUseFileSplitsFromInputFormat(inputFormat, directoryLister)) {
             return handleGetSplitsFromInputFormat(configuration, path, schema, inputFormat, stopped, hiveSplitSource, splitFactory);
@@ -369,6 +379,7 @@ public class StoragePartitionLoader
         HiveDirectoryContext hiveDirectoryContext = new HiveDirectoryContext(
                 recursiveDirWalkerEnabled ? RECURSE : IGNORED,
                 cacheable,
+                isSkipEmptyFilesEnabled(session),
                 hdfsContext.getIdentity(),
                 buildDirectoryContextProperties(session),
                 session.getRuntimeStats());
@@ -401,6 +412,7 @@ public class StoragePartitionLoader
             Iterators.addAll(fileInfos, directoryLister.list(fileSystem, table, path, partition, namenodeStats, new HiveDirectoryContext(
                     FAIL,
                     isUseListDirectoryCache(session),
+                    isSkipEmptyFilesEnabled(session),
                     hdfsContext.getIdentity(),
                     buildDirectoryContextProperties(session),
                     session.getRuntimeStats())));
@@ -550,6 +562,7 @@ public class StoragePartitionLoader
         HiveDirectoryContext hiveDirectoryContext = new HiveDirectoryContext(
                 recursiveDirWalkerEnabled ? RECURSE : IGNORED,
                 isUseListDirectoryCache(session),
+                isSkipEmptyFilesEnabled(session),
                 hdfsContext.getIdentity(),
                 buildDirectoryContextProperties(session),
                 session.getRuntimeStats());
@@ -570,6 +583,7 @@ public class StoragePartitionLoader
             HiveDirectoryContext hiveDirectoryContext = new HiveDirectoryContext(
                     IGNORED,
                     isUseListDirectoryCache(session),
+                    isSkipEmptyFilesEnabled(session),
                     hdfsContext.getIdentity(),
                     buildDirectoryContextProperties(session),
                     session.getRuntimeStats());

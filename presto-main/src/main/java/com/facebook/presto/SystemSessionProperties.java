@@ -93,7 +93,6 @@ public final class SystemSessionProperties
     public static final String DISTRIBUTED_JOIN = "distributed_join";
     public static final String DISTRIBUTED_INDEX_JOIN = "distributed_index_join";
     public static final String HASH_PARTITION_COUNT = "hash_partition_count";
-    public static final String CTE_HASH_PARTITION_COUNT = "cte_hash_partition_count";
     public static final String CTE_HEURISTIC_REPLICATION_THRESHOLD = "cte_heuristic_replication_threshold";
 
     public static final String PARTITIONING_PROVIDER_CATALOG = "partitioning_provider_catalog";
@@ -147,6 +146,7 @@ public final class SystemSessionProperties
     public static final String OPTIMIZE_METADATA_QUERIES_CALL_THRESHOLD = "optimize_metadata_queries_call_threshold";
     public static final String FAST_INEQUALITY_JOINS = "fast_inequality_joins";
     public static final String QUERY_PRIORITY = "query_priority";
+    public static final String CONFIDENCE_BASED_BROADCAST_ENABLED = "confidence_based_broadcast_enabled";
     public static final String SPILL_ENABLED = "spill_enabled";
     public static final String JOIN_SPILL_ENABLED = "join_spill_enabled";
     public static final String AGGREGATION_SPILL_ENABLED = "aggregation_spill_enabled";
@@ -324,6 +324,7 @@ public final class SystemSessionProperties
     public static final String SKIP_HASH_GENERATION_FOR_JOIN_WITH_TABLE_SCAN_INPUT = "skip_hash_generation_for_join_with_table_scan_input";
     public static final String GENERATE_DOMAIN_FILTERS = "generate_domain_filters";
     public static final String REWRITE_EXPRESSION_WITH_CONSTANT_EXPRESSION = "rewrite_expression_with_constant_expression";
+    public static final String PRINT_ESTIMATED_STATS_FROM_CACHE = "print_estimated_stats_from_cache";
 
     // TODO: Native execution related session properties that are temporarily put here. They will be relocated in the future.
     public static final String NATIVE_SIMPLIFIED_EXPRESSION_EVALUATION_ENABLED = "native_simplified_expression_evaluation_enabled";
@@ -345,7 +346,9 @@ public final class SystemSessionProperties
     public static final String NATIVE_EXECUTION_PROCESS_REUSE_ENABLED = "native_execution_process_reuse_enabled";
     public static final String NATIVE_DEBUG_VALIDATE_OUTPUT_FROM_OPERATORS = "native_debug_validate_output_from_operators";
     public static final String DEFAULT_VIEW_SECURITY_MODE = "default_view_security_mode";
+    public static final String JOIN_PREFILTER_BUILD_SIDE = "join_prefilter_build_side";
     public static final String OPTIMIZER_USE_HISTOGRAMS = "optimizer_use_histograms";
+    public static final String WARN_ON_COMMON_NAN_PATTERNS = "warn_on_common_nan_patterns";
 
     private final List<PropertyMetadata<?>> sessionProperties;
 
@@ -422,6 +425,11 @@ public final class SystemSessionProperties
                         featuresConfig.isSizeBasedJoinDistributionTypeEnabled(),
                         false),
                 booleanProperty(
+                        CONFIDENCE_BASED_BROADCAST_ENABLED,
+                        "Enable confidence based broadcasting when enabled",
+                        false,
+                        false),
+                booleanProperty(
                         DISTRIBUTED_INDEX_JOIN,
                         "Distribute index joins on join keys instead of executing inline",
                         featuresConfig.isDistributedIndexJoinsEnabled(),
@@ -430,11 +438,6 @@ public final class SystemSessionProperties
                         HASH_PARTITION_COUNT,
                         "Number of partitions for distributed joins and aggregations",
                         queryManagerConfig.getHashPartitionCount(),
-                        false),
-                integerProperty(
-                        CTE_HASH_PARTITION_COUNT,
-                        "Number of partitions for materializing CTEs",
-                        queryManagerConfig.getCteHashPartitionCount(),
                         false),
                 stringProperty(
                         PARTITIONING_PROVIDER_CATALOG,
@@ -1621,7 +1624,7 @@ public final class SystemSessionProperties
                         NATIVE_SPILL_COMPRESSION_CODEC,
                         "Native Execution only. The compression algorithm type to compress the spilled data.\n " +
                                 "Supported compression codecs are: ZLIB, SNAPPY, LZO, ZSTD, LZ4 and GZIP. NONE means no compression.",
-                        "snappy",
+                        "zstd",
                         false),
                 longProperty(
                         NATIVE_SPILL_WRITE_BUFFER_SIZE,
@@ -1915,6 +1918,12 @@ public final class SystemSessionProperties
                         "Rewrite left join with is null check to semi join",
                         featuresConfig.isRewriteExpressionWithConstantVariable(),
                         false),
+                booleanProperty(
+                        PRINT_ESTIMATED_STATS_FROM_CACHE,
+                        "When printing estimated plan stats after optimization is complete, such as in an EXPLAIN query or for logging in a QueryCompletedEvent, " +
+                                "get stats from a cache that was populated during query optimization rather than recalculating the stats on the final plan.",
+                        featuresConfig.isPrintEstimatedStatsFromCache(),
+                        false),
                 new PropertyMetadata<>(
                         DEFAULT_VIEW_SECURITY_MODE,
                         format("Set default view security mode. Options are: %s",
@@ -1927,9 +1936,18 @@ public final class SystemSessionProperties
                         false,
                         value -> CreateView.Security.valueOf(((String) value).toUpperCase()),
                         CreateView.Security::name),
+                booleanProperty(
+                        JOIN_PREFILTER_BUILD_SIDE,
+                        "Prefiltering the build/inner side of a join with keys from the other side",
+                        false,
+                        false),
                 booleanProperty(OPTIMIZER_USE_HISTOGRAMS,
                         "whether or not to use histograms in the CBO",
                         featuresConfig.isUseHistograms(),
+                        false),
+                booleanProperty(WARN_ON_COMMON_NAN_PATTERNS,
+                        "Whether to give a warning for some common issues relating to NaNs",
+                        featuresConfig.getWarnOnCommonNanPatterns(),
                         false));
     }
 
@@ -2007,14 +2025,14 @@ public final class SystemSessionProperties
         return session.getSystemProperty(DISTRIBUTED_INDEX_JOIN, Boolean.class);
     }
 
+    public static boolean confidenceBasedBroadcastEnabled(Session session)
+    {
+        return session.getSystemProperty(CONFIDENCE_BASED_BROADCAST_ENABLED, Boolean.class);
+    }
+
     public static int getHashPartitionCount(Session session)
     {
         return session.getSystemProperty(HASH_PARTITION_COUNT, Integer.class);
-    }
-
-    public static int getCteHashPartitionCount(Session session)
-    {
-        return session.getSystemProperty(CTE_HASH_PARTITION_COUNT, Integer.class);
     }
 
     public static int getCteHeuristicReplicationThreshold(Session session)
@@ -2344,14 +2362,14 @@ public final class SystemSessionProperties
     public static DataSize getAggregationOperatorUnspillMemoryLimit(Session session)
     {
         DataSize memoryLimitForMerge = session.getSystemProperty(AGGREGATION_OPERATOR_UNSPILL_MEMORY_LIMIT, DataSize.class);
-        checkArgument(memoryLimitForMerge.toBytes() >= 0, "%s must be positive", AGGREGATION_OPERATOR_UNSPILL_MEMORY_LIMIT);
+        checkArgument(memoryLimitForMerge.toBytes() >= 0, "%s must be non-negative", AGGREGATION_OPERATOR_UNSPILL_MEMORY_LIMIT);
         return memoryLimitForMerge;
     }
 
     public static DataSize getTopNOperatorUnspillMemoryLimit(Session session)
     {
         DataSize unspillMemoryLimit = session.getSystemProperty(TOPN_OPERATOR_UNSPILL_MEMORY_LIMIT, DataSize.class);
-        checkArgument(unspillMemoryLimit.toBytes() >= 0, "%s must be positive", TOPN_OPERATOR_UNSPILL_MEMORY_LIMIT);
+        checkArgument(unspillMemoryLimit.toBytes() >= 0, "%s must be non-negative", TOPN_OPERATOR_UNSPILL_MEMORY_LIMIT);
         return unspillMemoryLimit;
     }
 
@@ -2363,7 +2381,7 @@ public final class SystemSessionProperties
     public static DataSize getTempStorageSpillerBufferSize(Session session)
     {
         DataSize tempStorageSpillerBufferSize = session.getSystemProperty(TEMP_STORAGE_SPILLER_BUFFER_SIZE, DataSize.class);
-        checkArgument(tempStorageSpillerBufferSize.toBytes() >= 0, "%s must be positive", TEMP_STORAGE_SPILLER_BUFFER_SIZE);
+        checkArgument(tempStorageSpillerBufferSize.toBytes() >= 0, "%s must be non-negative", TEMP_STORAGE_SPILLER_BUFFER_SIZE);
         return tempStorageSpillerBufferSize;
     }
 
@@ -3213,8 +3231,23 @@ public final class SystemSessionProperties
         return session.getSystemProperty(DEFAULT_VIEW_SECURITY_MODE, CreateView.Security.class);
     }
 
+    public static boolean isJoinPrefilterEnabled(Session session)
+    {
+        return session.getSystemProperty(JOIN_PREFILTER_BUILD_SIDE, Boolean.class);
+    }
+
+    public static boolean isPrintEstimatedStatsFromCacheEnabled(Session session)
+    {
+        return session.getSystemProperty(PRINT_ESTIMATED_STATS_FROM_CACHE, Boolean.class);
+    }
+
     public static boolean shouldOptimizerUseHistograms(Session session)
     {
         return session.getSystemProperty(OPTIMIZER_USE_HISTOGRAMS, Boolean.class);
+    }
+
+    public static boolean warnOnCommonNanPatterns(Session session)
+    {
+        return session.getSystemProperty(WARN_ON_COMMON_NAN_PATTERNS, Boolean.class);
     }
 }

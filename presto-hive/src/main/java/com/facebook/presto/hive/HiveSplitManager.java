@@ -236,7 +236,17 @@ public class HiveSplitManager
             throw new PrestoException(HIVE_TRANSACTION_NOT_FOUND, format("Transaction not found: %s", transaction));
         }
         SemiTransactionalHiveMetastore metastore = metadata.getMetastore();
-        MetastoreContext metastoreContext = new MetastoreContext(session.getIdentity(), session.getQueryId(), session.getClientInfo(), session.getSource(), getMetastoreHeaders(session), isUserDefinedTypeEncodingEnabled(session), metastore.getColumnConverterProvider(), session.getWarningCollector(), session.getRuntimeStats());
+        MetastoreContext metastoreContext = new MetastoreContext(
+                session.getIdentity(),
+                session.getQueryId(),
+                session.getClientInfo(),
+                session.getClientTags(),
+                session.getSource(),
+                getMetastoreHeaders(session),
+                isUserDefinedTypeEncodingEnabled(session),
+                metastore.getColumnConverterProvider(),
+                session.getWarningCollector(),
+                session.getRuntimeStats());
         Table table = layout.getTable(metastore, metastoreContext);
 
         if (!isOfflineDataDebugModeEnabled(session)) {
@@ -520,7 +530,7 @@ public class HiveSplitManager
                     throw new PrestoException(GENERIC_INTERNAL_ERROR, "Partition not loaded: " + hivePartition);
                 }
                 String partitionName = makePartName(table.getPartitionColumns(), partition.getValues());
-                Optional<EncryptionInformation> encryptionInformation = encryptionInformationForPartitions.map(metadata -> metadata.get(hivePartition.getPartitionId()));
+                Optional<EncryptionInformation> encryptionInformation = encryptionInformationForPartitions.map(metadata -> metadata.get(hivePartition.getPartitionId().getPartitionName()));
 
                 if (!isOfflineDataDebugModeEnabled(session)) {
                     // verify partition is online
@@ -588,7 +598,7 @@ public class HiveSplitManager
                                 tableToPartitionMapping,
                                 encryptionInformation,
                                 partitionSplitInfo.get(hivePartition.getPartitionId().getPartitionName()).getRedundantColumnDomains(),
-                                Optional.empty()));
+                                partition.getRowIdPartitionComponent()));
             }
             if (unreadablePartitionsSkipped > 0) {
                 StringBuilder warningMessage = new StringBuilder(format("Table '%s' has %s out of %s partitions unreadable: ", tableName, unreadablePartitionsSkipped, partitionBatch.size()));
@@ -732,7 +742,17 @@ public class HiveSplitManager
             Map<String, HiveColumnHandle> predicateColumns,
             Optional<Map<Subfield, Domain>> domains)
     {
-        MetastoreContext metastoreContext = new MetastoreContext(session.getIdentity(), session.getQueryId(), session.getClientInfo(), session.getSource(), getMetastoreHeaders(session), isUserDefinedTypeEncodingEnabled(session), metastore.getColumnConverterProvider(), session.getWarningCollector(), session.getRuntimeStats());
+        MetastoreContext metastoreContext = new MetastoreContext(
+                session.getIdentity(),
+                session.getQueryId(),
+                session.getClientInfo(),
+                session.getClientTags(),
+                session.getSource(),
+                getMetastoreHeaders(session),
+                isUserDefinedTypeEncodingEnabled(session),
+                metastore.getColumnConverterProvider(),
+                session.getWarningCollector(),
+                session.getRuntimeStats());
         Map<String, Optional<Partition>> partitions = metastore.getPartitionsByNames(
                 metastoreContext,
                 tableName.getSchemaName(),
@@ -984,7 +1004,7 @@ public class HiveSplitManager
     }
 
     /**
-     * Partition the given list in exponentially (power of 2) increasing batch sizes starting at 1 up to maxBatchSize
+     * Partition the given list in exponentially (power of 2) increasing batch sizes starting at minBatchSize up to maxBatchSize
      */
     private static <T> Iterable<List<T>> partitionExponentially(List<T> values, int minBatchSize, int maxBatchSize)
     {

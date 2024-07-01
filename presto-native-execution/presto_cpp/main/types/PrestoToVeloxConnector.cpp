@@ -78,7 +78,8 @@ dwio::common::FileFormat toVeloxFileFormat(
       return dwio::common::FileFormat::JSON;
     }
   } else if (format.inputFormat == "com.facebook.alpha.AlphaInputFormat") {
-    return dwio::common::FileFormat::ALPHA;
+    // ALPHA has been renamed in Velox to NIMBLE.
+    return dwio::common::FileFormat::NIMBLE;
   }
   VELOX_UNSUPPORTED(
       "Unsupported file format: {} {}", format.inputFormat, format.serDe);
@@ -87,7 +88,7 @@ dwio::common::FileFormat toVeloxFileFormat(
 dwio::common::FileFormat toVeloxFileFormat(
     const presto::protocol::FileFormat format) {
   if (format == protocol::FileFormat::ORC) {
-    return dwio::common::FileFormat::DWRF;
+    return dwio::common::FileFormat::ORC;
   } else if (format == protocol::FileFormat::PARQUET) {
     return dwio::common::FileFormat::PARQUET;
   }
@@ -234,6 +235,9 @@ std::string toString(
     const VeloxExprConverter& exprConverter,
     const TypePtr& type) {
   auto value = exprConverter.getConstantValue(type, *block);
+  if (type->isVarbinary()) {
+    return value.value<TypeKind::VARBINARY>();
+  }
   return value.value<std::string>();
 }
 
@@ -651,6 +655,7 @@ std::unique_ptr<common::Filter> toFilter(
     case TypeKind::DOUBLE:
       return doubleRangeToFilter(range, nullAllowed, exprConverter, type);
     case TypeKind::VARCHAR:
+    case TypeKind::VARBINARY:
       return varcharRangeToFilter(range, nullAllowed, exprConverter, type);
     case TypeKind::BOOLEAN:
       return boolRangeToFilter(range, nullAllowed, exprConverter, type);
@@ -880,7 +885,8 @@ dwio::common::FileFormat toFileFormat(
     case protocol::HiveStorageFormat::PARQUET:
       return dwio::common::FileFormat::PARQUET;
     case protocol::HiveStorageFormat::ALPHA:
-      return dwio::common::FileFormat::ALPHA;
+      // This has been renamed in Velox from ALPHA to NIMBLE.
+      return dwio::common::FileFormat::NIMBLE;
     default:
       VELOX_UNSUPPORTED(
           "Unsupported file format in {}: {}.",
@@ -1022,6 +1028,41 @@ toHiveBucketProperty(
       sortedBy);
 }
 
+std::unique_ptr<velox::connector::hive::HiveColumnHandle>
+toVeloxHiveColumnHandle(
+    const protocol::ColumnHandle* column,
+    const TypeParser& typeParser) {
+  auto* hiveColumn = dynamic_cast<const protocol::HiveColumnHandle*>(column);
+  VELOX_CHECK_NOT_NULL(
+      hiveColumn, "Unexpected column handle type {}", column->_type);
+  velox::type::fbhive::HiveTypeParser hiveTypeParser;
+  // TODO(spershin): Should we pass something different than 'typeSignature'
+  // to 'hiveType' argument of the 'HiveColumnHandle' constructor?
+  return std::make_unique<velox::connector::hive::HiveColumnHandle>(
+      hiveColumn->name,
+      toHiveColumnType(hiveColumn->columnType),
+      stringToType(hiveColumn->typeSignature, typeParser),
+      hiveTypeParser.parse(hiveColumn->hiveType),
+      toRequiredSubfields(hiveColumn->requiredSubfields));
+}
+
+velox::connector::hive::HiveBucketConversion toVeloxBucketConversion(
+    const protocol::BucketConversion& bucketConversion) {
+  velox::connector::hive::HiveBucketConversion veloxBucketConversion;
+  // Current table bucket count (new).
+  veloxBucketConversion.tableBucketCount = bucketConversion.tableBucketCount;
+  // Partition bucket count (old).
+  veloxBucketConversion.partitionBucketCount =
+      bucketConversion.partitionBucketCount;
+  TypeParser typeParser;
+  for (const auto& column : bucketConversion.bucketColumnHandles) {
+    // Columns used as bucket input.
+    veloxBucketConversion.bucketColumnHandles.push_back(
+        toVeloxHiveColumnHandle(&column, typeParser));
+  }
+  return veloxBucketConversion;
+}
+
 velox::connector::hive::iceberg::FileContent toVeloxFileContent(
     const presto::protocol::FileContent content) {
   if (content == protocol::FileContent::DATA) {
@@ -1069,39 +1110,35 @@ HivePrestoToVeloxConnector::toVeloxSplit(
   infoColumns.insert(
       {"$file_modified_time",
        std::to_string(hiveSplit->fileSplit.fileModifiedTime)});
-  return std::make_unique<velox::connector::hive::HiveConnectorSplit>(
-      catalogId,
-      hiveSplit->fileSplit.path,
-      toVeloxFileFormat(hiveSplit->storage.storageFormat),
-      hiveSplit->fileSplit.start,
-      hiveSplit->fileSplit.length,
-      partitionKeys,
-      hiveSplit->tableBucketNumber
-          ? std::optional<int>(*hiveSplit->tableBucketNumber)
-          : std::nullopt,
-      customSplitInfo,
-      extraFileInfo,
-      serdeParameters,
-      hiveSplit->splitWeight,
-      infoColumns);
+  auto veloxSplit =
+      std::make_unique<velox::connector::hive::HiveConnectorSplit>(
+          catalogId,
+          hiveSplit->fileSplit.path,
+          toVeloxFileFormat(hiveSplit->storage.storageFormat),
+          hiveSplit->fileSplit.start,
+          hiveSplit->fileSplit.length,
+          partitionKeys,
+          hiveSplit->tableBucketNumber
+              ? std::optional<int>(*hiveSplit->tableBucketNumber)
+              : std::nullopt,
+          customSplitInfo,
+          extraFileInfo,
+          serdeParameters,
+          hiveSplit->splitWeight,
+          infoColumns);
+  if (hiveSplit->bucketConversion) {
+    VELOX_CHECK_NOT_NULL(hiveSplit->tableBucketNumber);
+    veloxSplit->bucketConversion =
+        toVeloxBucketConversion(*hiveSplit->bucketConversion);
+  }
+  return veloxSplit;
 }
 
 std::unique_ptr<velox::connector::ColumnHandle>
 HivePrestoToVeloxConnector::toVeloxColumnHandle(
     const protocol::ColumnHandle* column,
     const TypeParser& typeParser) const {
-  auto hiveColumn = dynamic_cast<const protocol::HiveColumnHandle*>(column);
-  VELOX_CHECK_NOT_NULL(
-      hiveColumn, "Unexpected column handle type {}", column->_type);
-  velox::type::fbhive::HiveTypeParser hiveTypeParser;
-  // TODO(spershin): Should we pass something different than 'typeSignature'
-  // to 'hiveType' argument of the 'HiveColumnHandle' constructor?
-  return std::make_unique<velox::connector::hive::HiveColumnHandle>(
-      hiveColumn->name,
-      toHiveColumnType(hiveColumn->columnType),
-      stringToType(hiveColumn->typeSignature, typeParser),
-      hiveTypeParser.parse(hiveColumn->hiveType),
-      toRequiredSubfields(hiveColumn->requiredSubfields));
+  return toVeloxHiveColumnHandle(column, typeParser);
 }
 
 std::unique_ptr<velox::connector::ConnectorTableHandle>
@@ -1178,10 +1215,6 @@ HivePrestoToVeloxConnector::toVeloxInsertTableHandle(
   bool isPartitioned{false};
   const auto inputColumns = toHiveColumns(
       hiveOutputTableHandle->inputColumns, typeParser, isPartitioned);
-  VELOX_USER_CHECK(
-      hiveOutputTableHandle->bucketProperty == nullptr || isPartitioned,
-      "Bucketed table must be partitioned: {}",
-      toJsonString(*hiveOutputTableHandle));
   return std::make_unique<velox::connector::hive::HiveInsertTableHandle>(
       inputColumns,
       toLocationHandle(hiveOutputTableHandle->locationHandle),
@@ -1206,10 +1239,6 @@ HivePrestoToVeloxConnector::toVeloxInsertTableHandle(
   bool isPartitioned{false};
   const auto inputColumns = toHiveColumns(
       hiveInsertTableHandle->inputColumns, typeParser, isPartitioned);
-  VELOX_USER_CHECK(
-      hiveInsertTableHandle->bucketProperty == nullptr || isPartitioned,
-      "Bucketed table must be partitioned: {}",
-      toJsonString(*hiveInsertTableHandle));
 
   const auto table = hiveInsertTableHandle->pageSinkMetadata.table;
   VELOX_USER_CHECK_NOT_NULL(table, "Table must not be null for insert query");

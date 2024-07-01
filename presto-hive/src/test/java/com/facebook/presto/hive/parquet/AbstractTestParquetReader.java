@@ -1701,8 +1701,8 @@ public abstract class AbstractTestParquetReader
                     parquetMetadataSource,
                     tempFile.getFile(),
                     tempFileModificationTime);
-            assertEquals(parquetFileMetadataCache.stats().missCount(), 3);
-            assertEquals(parquetFileMetadataCache.stats().hitCount(), 4);
+            assertEquals(parquetFileMetadataCache.stats().missCount(), 2);
+            assertEquals(parquetFileMetadataCache.stats().hitCount(), 5);
         }
     }
 
@@ -1965,10 +1965,6 @@ public abstract class AbstractTestParquetReader
         if (nanos < 0) {
             nanos += 1_000_000_000;
             seconds -= 1;
-        }
-        if (nanos > 1_000_000_000) {
-            nanos -= 1_000_000_000;
-            seconds += 1;
         }
         timestamp.setTime(seconds * 1000);
         timestamp.setNanos(nanos);

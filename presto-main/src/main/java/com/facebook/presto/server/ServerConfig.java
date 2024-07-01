@@ -29,6 +29,8 @@ public class ServerConfig
     private boolean resourceManager;
     private boolean resourceManagerEnabled;
     private boolean catalogServer;
+    private boolean coordinatorSidecar;
+    private boolean coordinatorSidecarEnabled;
     private boolean catalogServerEnabled;
     private boolean coordinator = true;
     private String prestoVersion = getClass().getPackage().getImplementationVersion();
@@ -40,6 +42,7 @@ public class ServerConfig
     private NodePoolType poolType = DEFAULT;
     private Duration clusterStatsExpirationDuration = new Duration(0, MILLISECONDS);
     private boolean nestedDataSerializationEnabled = true;
+    private Duration clusterResourceGroupStateInfoExpirationDuration = new Duration(0, MILLISECONDS);
 
     public boolean isResourceManager()
     {
@@ -86,6 +89,18 @@ public class ServerConfig
     public ServerConfig setCatalogServerEnabled(boolean catalogServerEnabled)
     {
         this.catalogServerEnabled = catalogServerEnabled;
+        return this;
+    }
+
+    public boolean isCoordinatorSidecarEnabled()
+    {
+        return coordinatorSidecarEnabled;
+    }
+
+    @Config("coordinator-sidecar-enabled")
+    public ServerConfig setCoordinatorSidecarEnabled(boolean coordinatorSidecarEnabled)
+    {
+        this.coordinatorSidecarEnabled = coordinatorSidecarEnabled;
         return this;
     }
 
@@ -212,6 +227,18 @@ public class ServerConfig
     public ServerConfig setNestedDataSerializationEnabled(boolean nestedDataSerializationEnabled)
     {
         this.nestedDataSerializationEnabled = nestedDataSerializationEnabled;
+        return this;
+    }
+
+    public Duration getClusterResourceGroupStateInfoExpirationDuration()
+    {
+        return clusterResourceGroupStateInfoExpirationDuration;
+    }
+
+    @Config("cluster-resource-group-state-info-expiration-duration")
+    public ServerConfig setClusterResourceGroupStateInfoExpirationDuration(Duration clusterResourceGroupStateInfoExpirationDuration)
+    {
+        this.clusterResourceGroupStateInfoExpirationDuration = clusterResourceGroupStateInfoExpirationDuration;
         return this;
     }
 }
