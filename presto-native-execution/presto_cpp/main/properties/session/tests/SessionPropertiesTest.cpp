@@ -23,6 +23,8 @@ class SessionPropertiesTest : public testing::Test {};
 
 TEST_F(SessionPropertiesTest, validateMapping) {
   const std::unordered_map<std::string, std::string> expectedMappings = {
+      {SessionProperties::kBroadcastFileDescriptorEnabled,
+       SessionProperties::kBroadcastFileDescriptorEnabled},
       {SessionProperties::kExprEvalSimplified,
        core::QueryConfig::kExprEvalSimplified},
       {SessionProperties::kExprMaxArraySizeInReduce,
@@ -45,6 +47,8 @@ TEST_F(SessionPropertiesTest, validateMapping) {
        core::QueryConfig::kRpcRateLimiterDecreaseFactor},
       {SessionProperties::kRpcRateLimiterMaxLimit,
        core::QueryConfig::kRpcRateLimiterMaxLimit},
+      {SessionProperties::kRpcRateLimiterHardLimit,
+       "rpc.ratelimiter.hard_limit"},
       {SessionProperties::kRpcCongestionMaxWindow,
        core::QueryConfig::kRpcCongestionMaxWindow},
       {SessionProperties::kSpillCompressionCodec,
@@ -113,7 +117,7 @@ TEST_F(SessionPropertiesTest, validateMapping) {
       {SessionProperties::kLegacyTimestamp,
        core::QueryConfig::kAdjustTimestampToTimezone},
       {SessionProperties::kLegacyTimestampWithTimezone,
-       core::QueryConfig::kLegacyTimestampWithTimezone},
+       core::QueryConfig::kUseSessionTimezoneForTimestampWithTimezone},
       {SessionProperties::kDriverCpuTimeSliceLimitMs,
        core::QueryConfig::kDriverCpuTimeSliceLimitMs},
       {SessionProperties::kMaxLocalExchangePartitionCount,
